@@ -27,7 +27,9 @@ logger = structlog.get_logger(__name__)
 # embedding evals (17), so a database seeded at either one re-seeds.
 # 21: conversation-evidence criteria for task, field intake, queries, and hallucination.
 # 23: word_info_preserved counts hits from the alignment, so insertions lower the score.
-SYSTEM_EVALS_VERSION = 23
+# 24: ndcg_at_k no longer counts duplicate retrievals, so it stays within 1.0.
+# 25: matthews_correlation computes multiclass MCC instead of rescaled accuracy.
+SYSTEM_EVALS_VERSION = 25
 
 # Postgres advisory-lock key. Serialises concurrent seed_evals() calls
 # across pods so the bulk_create path can't race on new eval_ids. Any
