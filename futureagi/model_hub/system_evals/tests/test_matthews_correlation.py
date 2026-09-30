@@ -1,9 +1,4 @@
-"""Golden tests for the matthews_correlation system eval.
-
-Expected MCC values are from sklearn.metrics.matthews_corrcoef.
-"""
-
-from __future__ import annotations
+"""Golden tests for matthews_correlation; expected values are from sklearn."""
 
 import builtins
 from pathlib import Path
@@ -23,16 +18,23 @@ def _mcc(output, expected):
     return ns["evaluate"](None, output, expected, None)["score"] * 2 - 1
 
 
-@pytest.mark.parametrize(
-    ("output", "expected", "mcc"),
-    [
-        (["a", "a", "a", "b", "c"], ["a", "b", "c", "b", "c"], 0.534522),
-        (["x", "y", "z", "x"], ["x", "y", "z", "y"], 0.7),
-        (["a", "b", "c"], ["a", "b", "c"], 1.0),
-        (["a", "a", "a"], ["a", "b", "c"], 0.0),
-        (["1", "1", "0", "0"], ["1", "0", "1", "0"], 0.0),
-    ],
-    ids=["multiclass", "multiclass-2", "perfect", "constant-prediction", "binary"],
-)
-def test_matches_sklearn(output, expected, mcc):
-    assert _mcc(output, expected) == pytest.approx(mcc, abs=1e-6)
+def test_multiclass_matches_sklearn():
+    assert _mcc(["a", "a", "a", "b", "c"], ["a", "b", "c", "b", "c"]) == pytest.approx(
+        0.534522, abs=1e-6
+    )
+
+
+def test_multiclass_with_repeated_labels_matches_sklearn():
+    assert _mcc(["x", "y", "z", "x"], ["x", "y", "z", "y"]) == pytest.approx(0.7)
+
+
+def test_perfect_multiclass_prediction_is_one():
+    assert _mcc(["a", "b", "c"], ["a", "b", "c"]) == pytest.approx(1.0)
+
+
+def test_constant_multiclass_prediction_is_zero():
+    assert _mcc(["a", "a", "a"], ["a", "b", "c"]) == pytest.approx(0.0)
+
+
+def test_binary_branch_unchanged():
+    assert _mcc(["1", "1", "0", "0"], ["1", "0", "1", "0"]) == pytest.approx(0.0)
