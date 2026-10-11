@@ -59,6 +59,7 @@ def test_python_c_without_deployment_env_skips_every_startup_mutation_path(monke
 @pytest.mark.parametrize(
     "command",
     [
+        "backfill_harness_agent_prompts",
         "backfill_legacy_scans",
         "backfill_score_tracer_project",
         "ch25_apply_schema",
@@ -67,6 +68,10 @@ def test_python_c_without_deployment_env_skips_every_startup_mutation_path(monke
         "makemigrations",
         "migrate",
         "provision_grouping_features",
+        "enable_sampled_grouping",
+        "requeue_budget_grouping",
+        "requeue_failed_grouping",
+        "requeue_investigations",
         "register_temporal_schedules",
         "seed_system_evals",
     ],
@@ -78,6 +83,7 @@ def test_mutation_guard_rejects_unsafe_management_commands(command):
 @pytest.mark.parametrize(
     "command",
     [
+        "backfill_harness_agent_prompts",
         "backfill_legacy_scans",
         "backfill_score_tracer_project",
         "ch25_apply_schema",
@@ -86,6 +92,10 @@ def test_mutation_guard_rejects_unsafe_management_commands(command):
         "drop_legacy_observation_span",
         "migrate",
         "provision_grouping_features",
+        "enable_sampled_grouping",
+        "requeue_budget_grouping",
+        "requeue_failed_grouping",
+        "requeue_investigations",
         "register_temporal_schedules",
         "seed_system_evals",
     ],
