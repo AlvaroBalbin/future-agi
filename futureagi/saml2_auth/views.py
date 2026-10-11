@@ -473,10 +473,8 @@ class IDPUploadViews(viewsets.ModelViewSet):
 
     @staticmethod
     def _revoke_idp_tokens(idp):
-        """Revoke scoped SAML credentials once the additive token fields land."""
+        """Revoke every live SAML credential issued through this IdP."""
 
-        if "origin_idp" not in {field.name for field in AuthToken._meta.get_fields()}:
-            return
         AuthToken.no_workspace_objects.filter(origin_idp=idp, is_active=True).update(
             is_active=False
         )
