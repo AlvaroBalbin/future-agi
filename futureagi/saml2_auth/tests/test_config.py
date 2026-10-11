@@ -109,3 +109,12 @@ def test_organization_can_upload_an_idp_after_deleting_one(
     live = SAMLMetadataModel.objects.get(organization=saml_tenants.org_a)
     assert live.meta == idp_metadata["google"]
     assert live.security_generation > deleted_generation
+
+
+def test_upload_reports_the_invalid_field(saml_tenants, idp_metadata):
+    client = _as_org_owner(saml_tenants.a1)
+
+    response = _upload_idp(client, idp_metadata["okta"], "name with spaces")
+
+    assert response.status_code == 400
+    assert "name:" in response.content.decode()

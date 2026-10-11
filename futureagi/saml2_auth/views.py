@@ -453,11 +453,13 @@ class IDPUploadViews(viewsets.ModelViewSet):
         return len(request.body) > maximum
 
     def _request_data(self, request):
+        """Return the cleaned upload, or None and the message to show."""
+
         if self._metadata_too_large(request):
-            return None
+            return None, "Metadata file is too large."
         form = IDPUploadForm(request.POST, request.FILES)
         if not form.is_valid():
-            return None
+            return None, _format_form_errors(form.errors)
         data = form.cleaned_data.copy()
         metadata_file = data.pop("file", None)
         data.pop("organization", None)
@@ -466,8 +468,8 @@ class IDPUploadViews(viewsets.ModelViewSet):
             try:
                 data["meta"] = metadata_file.read().decode()
             except (UnicodeDecodeError, OSError):
-                return None
-        return data
+                return None, "Please select a XML file."
+        return data, None
 
     @staticmethod
     def _revoke_idp_tokens(idp):
@@ -559,10 +561,10 @@ class IDPUploadViews(viewsets.ModelViewSet):
         },
     )
     def create(self, request, *args, **kwargs):
-        data = self._request_data(request)
+        data, error = self._request_data(request)
         organization = get_request_organization(request)
         if data is None or organization is None:
-            return self._gm.bad_request("Please select a XML file.")
+            return self._gm.bad_request(error or "Please select a XML file.")
         if SAMLMetadataModel.objects.filter(
             deleted=False, organization=organization
         ).exists():
@@ -633,9 +635,9 @@ class IDPUploadViews(viewsets.ModelViewSet):
     )
     def update(self, request, *args, **kwargs):
         original = self.get_object()
-        data = self._request_data(request)
+        data, error = self._request_data(request)
         if data is None:
-            return self._gm.bad_request("Please select a XML file.")
+            return self._gm.bad_request(error)
         if (
             data.get("identity_type")
             and int(original.identity_type) != int(data["identity_type"])
