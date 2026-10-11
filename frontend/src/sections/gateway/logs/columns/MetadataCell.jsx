@@ -6,7 +6,8 @@ import { formatMetadataValue, readMetadataValue } from "./formatMetadataValue";
 /**
  * Generic cell for a declared custom-property column. Reads exactly
  * `metadata[name]` and renders plain text only (R17-R24). Truncated values are
- * focusable so the tooltip opens on focus as well as hover (R41).
+ * focusable so the tooltip opens on focus as well as hover, and the Tooltip's
+ * string title gives them their accessible name (R41).
  */
 const MetadataCell = React.memo(function MetadataCell({ metadata, name }) {
   const { text, full, truncated } = formatMetadataValue(
@@ -19,7 +20,6 @@ const MetadataCell = React.memo(function MetadataCell({ metadata, name }) {
       noWrap
       component="span"
       tabIndex={truncated ? 0 : undefined}
-      aria-label={truncated ? full : undefined}
       sx={{ display: "block" }}
     >
       {text}

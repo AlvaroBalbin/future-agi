@@ -1,5 +1,5 @@
 import React from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
 import RequestExplorerSection from "./RequestExplorerSection";
 
@@ -9,19 +9,24 @@ const columnsState = {
   stale: [],
   visibleCount: 10,
   totalCount: 10,
+  atCap: false,
+  storageKey: "agentcc.requestLogs.columns.v1:user-a:org-1:requests",
   declarationStatus: "success",
+  reservedDeclared: false,
   unavailableCustomCount: 0,
-  storageNotice: null,
   toggle: vi.fn(),
   move: vi.fn(),
   remove: vi.fn(),
   reset: vi.fn(),
   retryDeclarations: vi.fn(),
-  dismissStorageNotice: vi.fn(),
 };
 
+const { mockUseRequestColumns } = vi.hoisted(() => ({
+  mockUseRequestColumns: vi.fn(),
+}));
+
 vi.mock("./columns/useRequestColumns", () => ({
-  default: () => columnsState,
+  default: (...args) => mockUseRequestColumns(...args),
 }));
 
 vi.mock("./RequestTable", () => ({
@@ -48,10 +53,16 @@ vi.mock("src/utils/axios", () => ({
 }));
 
 describe("RequestExplorerSection columns control", () => {
+  beforeEach(() => {
+    mockUseRequestColumns.mockReset();
+    mockUseRequestColumns.mockReturnValue(columnsState);
+  });
+
   it("shows the Columns button beside Filters on the Requests tab and opens the named dialog (R1/R39)", async () => {
     const user = userEvent.setup();
     window.history.pushState({}, "", "/dashboard/gateway/logs");
     render(<RequestExplorerSection />);
+    expect(mockUseRequestColumns).toHaveBeenCalledWith({ enabled: true });
 
     const button = screen.getByRole("button", { name: "Columns" });
     expect(button).toHaveAttribute("aria-haspopup", "dialog");
@@ -66,21 +77,23 @@ describe("RequestExplorerSection columns control", () => {
     ).toBeInTheDocument();
   });
 
-  it("has no Columns control on the Sessions tab (R1)", () => {
+  it("has no Columns control and fetches no declarations on the Sessions tab (R1)", () => {
     window.history.pushState({}, "", "/dashboard/gateway/logs?view=sessions");
     render(<RequestExplorerSection />);
     expect(screen.getByTestId("session-explorer")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Columns" })).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
+    expect(mockUseRequestColumns).toHaveBeenCalledWith({ enabled: false });
+    expect(mockUseRequestColumns).not.toHaveBeenCalledWith({ enabled: true });
   });
 
-  it("surfaces the storage notice from the hook (R16)", () => {
-    columnsState.storageNotice = "Preferences could not be saved";
+  it("keeps the Columns button disabled until the preference key is known (J4)", () => {
+    mockUseRequestColumns.mockReturnValue({
+      ...columnsState,
+      storageKey: null,
+    });
     window.history.pushState({}, "", "/dashboard/gateway/logs");
     render(<RequestExplorerSection />);
-    expect(
-      screen.getByText("Preferences could not be saved"),
-    ).toBeInTheDocument();
-    columnsState.storageNotice = null;
+    expect(screen.getByRole("button", { name: "Columns" })).toBeDisabled();
   });
 });

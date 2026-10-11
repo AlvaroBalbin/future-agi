@@ -8,8 +8,6 @@ const orgState = { currentOrganizationId: "org-1", isReady: true };
 const declarationsState = {
   data: [{ name: "tenant", organization: "org-1" }],
   status: "success",
-  isError: false,
-  isPending: false,
   refetch: vi.fn(),
 };
 
@@ -21,8 +19,17 @@ vi.mock("src/contexts/OrganizationContext", () => ({
   useOrganization: () => orgState,
 }));
 
+const { mockUseCustomProperties, mockEnqueueSnackbar } = vi.hoisted(() => ({
+  mockUseCustomProperties: vi.fn(),
+  mockEnqueueSnackbar: vi.fn(),
+}));
+
 vi.mock("../../../custom-properties/hooks/useCustomProperties", () => ({
-  useCustomProperties: () => declarationsState,
+  useCustomProperties: (...args) => mockUseCustomProperties(...args),
+}));
+
+vi.mock("notistack", () => ({
+  enqueueSnackbar: (...args) => mockEnqueueSnackbar(...args),
 }));
 
 const KEY_A = "agentcc.requestLogs.columns.v1:user-a:org-1:requests";
@@ -72,9 +79,10 @@ describe("useRequestColumns", () => {
     orgState.isReady = true;
     declarationsState.data = [{ name: "tenant", organization: "org-1" }];
     declarationsState.status = "success";
-    declarationsState.isError = false;
-    declarationsState.isPending = false;
     declarationsState.refetch = vi.fn();
+    mockUseCustomProperties.mockReset();
+    mockUseCustomProperties.mockReturnValue(declarationsState);
+    mockEnqueueSnackbar.mockReset();
   });
 
   afterEach(() => {
@@ -96,8 +104,24 @@ describe("useRequestColumns", () => {
       "Session ID",
     ]);
     expect(result.current.storageKey).toBe(KEY_A);
-    expect(result.current.storageNotice).toBeNull();
+    expect(mockEnqueueSnackbar).not.toHaveBeenCalled();
     expect(storage.setItem).not.toHaveBeenCalled();
+  });
+
+  it("queries declarations only while enabled and reports their failure itself (J6)", () => {
+    const { rerender } = renderHook(
+      ({ enabled }) => useRequestColumns({ enabled }),
+      { initialProps: { enabled: false } },
+    );
+    expect(mockUseCustomProperties).toHaveBeenLastCalledWith(
+      {},
+      { enabled: false, meta: { errorHandled: true } },
+    );
+    rerender({ enabled: true });
+    expect(mockUseCustomProperties).toHaveBeenLastCalledWith(
+      {},
+      { enabled: true, meta: { errorHandled: true } },
+    );
   });
 
   it("toggle, move and reset update columns and persist ids only (AC2/AC3/AC13)", () => {
@@ -208,6 +232,30 @@ describe("useRequestColumns", () => {
     ]);
   });
 
+  it("tells the picker when only reserved names are declared and when the column cap is hit (D3)", () => {
+    declarationsState.data = [
+      { name: "application", organization: "org-1" },
+      { name: "service", organization: "org-1" },
+    ];
+    storage.setItem(
+      KEY_A,
+      JSON.stringify({
+        v: 1,
+        columns: [
+          ...DEFAULT_CONFIG.columns,
+          ...Array.from({ length: MAX_COLUMN_ENTRIES - 10 }, (_, i) => ({
+            id: `metadata:p${i}`,
+          })),
+        ],
+        hidden: [],
+      }),
+    );
+    const { result } = renderHook(() => useRequestColumns());
+    expect(result.current.pickerEntries.custom).toEqual([]);
+    expect(result.current.reservedDeclared).toBe(true);
+    expect(result.current.atCap).toBe(true);
+  });
+
   it("does not touch storage until identity and organization are ready (J4)", () => {
     orgState.isReady = false;
     const { result } = renderHook(() => useRequestColumns());
@@ -223,7 +271,7 @@ describe("useRequestColumns", () => {
     storage.setItem(KEY_A, "{corrupt");
     const { result } = renderHook(() => useRequestColumns());
     expect(labels(result)).toHaveLength(10);
-    expect(result.current.storageNotice).toBeNull();
+    expect(mockEnqueueSnackbar).not.toHaveBeenCalled();
     expect(storage.getItem(KEY_A)).toBe("{corrupt");
   });
 
@@ -259,7 +307,7 @@ describe("useRequestColumns", () => {
       const { result } = renderHook(() => useRequestColumns());
       expect(result.current.config).toEqual(DEFAULT_CONFIG);
       expect(labels(result)).toEqual(DEFAULT_LABELS);
-      expect(result.current.storageNotice).toBeNull();
+      expect(mockEnqueueSnackbar).not.toHaveBeenCalled();
       expect(storage.getItem(KEY_A)).toBe(bytes);
       expect(storage.setItem).not.toHaveBeenCalled();
       expect(storage.removeItem).not.toHaveBeenCalled();
@@ -273,9 +321,24 @@ describe("useRequestColumns", () => {
     const { result } = renderHook(() => useRequestColumns());
     act(() => result.current.toggle("builtin:provider"));
     expect(labels(result)).not.toContain("Provider");
-    expect(result.current.storageNotice).toBe("Preferences could not be saved");
-    act(() => result.current.dismissStorageNotice());
-    expect(result.current.storageNotice).toBeNull();
+    expect(mockEnqueueSnackbar).toHaveBeenCalledWith(
+      "Preferences could not be saved",
+      { variant: "warning" },
+    );
+  });
+
+  it("resets in memory and shows a notice when removing the record fails (R16)", () => {
+    const { result } = renderHook(() => useRequestColumns());
+    act(() => result.current.toggle("builtin:provider"));
+    storage.removeItem.mockImplementation(() => {
+      throw new DOMException("denied", "SecurityError");
+    });
+    act(() => result.current.reset());
+    expect(labels(result)).toEqual(DEFAULT_LABELS);
+    expect(mockEnqueueSnackbar).toHaveBeenCalledWith(
+      "Preferences could not be saved",
+      { variant: "warning" },
+    );
   });
 
   it("hides custom columns while declarations are pending or failed and keeps the saved config (AC18)", () => {
@@ -288,7 +351,6 @@ describe("useRequestColumns", () => {
       }),
     );
     declarationsState.status = "pending";
-    declarationsState.isPending = true;
     declarationsState.data = undefined;
     const { result, rerender } = renderHook(() => useRequestColumns());
     expect(labels(result)).not.toContain("tenant");
@@ -296,8 +358,6 @@ describe("useRequestColumns", () => {
     expect(result.current.unavailableCustomCount).toBe(1);
 
     declarationsState.status = "error";
-    declarationsState.isPending = false;
-    declarationsState.isError = true;
     rerender();
     expect(labels(result)).not.toContain("tenant");
     expect(result.current.declarationStatus).toBe("error");
@@ -306,7 +366,6 @@ describe("useRequestColumns", () => {
     expect(declarationsState.refetch).toHaveBeenCalledTimes(1);
 
     declarationsState.status = "success";
-    declarationsState.isError = false;
     declarationsState.data = [{ name: "tenant", organization: "org-1" }];
     rerender();
     expect(labels(result)).toContain("tenant");
@@ -363,15 +422,12 @@ describe("useRequestColumns", () => {
 
     it("moves no custom column while declarations are pending or failed", () => {
       declarationsState.status = "pending";
-      declarationsState.isPending = true;
       declarationsState.data = undefined;
       const { result, rerender } = renderHook(() => useRequestColumns());
       act(() => result.current.move("metadata:a", 1));
       expect(storage.getItem(KEY_A)).toBe(record);
 
       declarationsState.status = "error";
-      declarationsState.isPending = false;
-      declarationsState.isError = true;
       rerender();
       act(() => result.current.move("metadata:b", -1));
       expect(storage.getItem(KEY_A)).toBe(record);
@@ -382,7 +438,6 @@ describe("useRequestColumns", () => {
       ]);
 
       declarationsState.status = "success";
-      declarationsState.isError = false;
       declarationsState.data = [
         { name: "a", organization: "org-1" },
         { name: "b", organization: "org-1" },

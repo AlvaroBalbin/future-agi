@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "src/utils/test-utils";
+import { render, screen, userEvent, within } from "src/utils/test-utils";
 import RequestTable from "./RequestTable";
 import { BUILTIN_COLUMNS, resolveColumns } from "./columns/columnModel";
 
@@ -185,5 +185,58 @@ describe("RequestTable", () => {
       "9",
     );
     mockState.data = savedData;
+  });
+
+  describe("built-in sort headers (R44)", () => {
+    const sortLabel = (name) =>
+      within(screen.getByRole("columnheader", { name })).getByRole("button");
+
+    // tenant sits between Service and Status, ahead of Latency.
+    const tenantBeforeLatency = resolveColumns({
+      config: {
+        v: 1,
+        columns: [
+          ...BUILTIN_COLUMNS.slice(0, 5).map((c) => ({ id: c.id })),
+          { id: "metadata:tenant" },
+          ...BUILTIN_COLUMNS.slice(5).map((c) => ({ id: c.id })),
+        ],
+        hidden: [],
+      },
+      declarations: [{ name: "tenant" }],
+      status: "success",
+    }).columns;
+
+    it("shows Timestamp as the active sort by default", () => {
+      render(<RequestTable {...baseProps} />);
+      expect(sortLabel("Timestamp")).toHaveClass("Mui-active");
+      expect(sortLabel("Latency")).not.toHaveClass("Mui-active");
+    });
+
+    it.each([
+      ["the default columns", undefined],
+      ["a custom column placed before it", tenantBeforeLatency],
+    ])(
+      "sorts by latency descending from page 1 with %s",
+      async (_label, columns) => {
+        const user = userEvent.setup();
+        const setFilters = vi.fn();
+        render(
+          <RequestTable
+            {...baseProps}
+            filters={{ model: "gpt-4o-mini" }}
+            setFilters={setFilters}
+            columns={columns}
+          />,
+        );
+
+        await user.click(sortLabel("Latency"));
+
+        expect(setFilters).toHaveBeenCalledWith({
+          model: "gpt-4o-mini",
+          sort: "-latency_ms",
+          page: "1",
+        });
+      },
+    );
   });
 });

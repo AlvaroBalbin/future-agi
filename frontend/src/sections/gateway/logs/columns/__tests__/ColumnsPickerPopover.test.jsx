@@ -2,7 +2,12 @@ import React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, userEvent, within } from "src/utils/test-utils";
 import ColumnsPickerPopover from "../ColumnsPickerPopover";
-import { DEFAULT_CONFIG, resolveColumns } from "../columnModel";
+import {
+  DEFAULT_CONFIG,
+  MAX_COLUMN_ENTRIES,
+  moveColumn,
+  resolveColumns,
+} from "../columnModel";
 
 function buildProps(overrides = {}) {
   const resolved = resolveColumns({
@@ -27,12 +32,41 @@ function buildProps(overrides = {}) {
     totalCount: resolved.totalCount,
     declarationStatus: overrides.status || "success",
     unavailableCustomCount: overrides.unavailableCustomCount || 0,
+    atCap: resolved.atCap,
+    reservedDeclared: resolved.reservedDeclared,
     onToggle: vi.fn(),
     onMove: vi.fn(),
     onRemove: vi.fn(),
     onReset: vi.fn(),
     onRetryDeclarations: vi.fn(),
   };
+}
+
+// Re-renders on every move, as the real hook does, so focus is checked
+// against the moved row.
+function MovablePicker() {
+  const [config, setConfig] = React.useState(DEFAULT_CONFIG);
+  const { movableIds } = resolveColumns({
+    config,
+    declarations: [],
+    status: "success",
+  });
+  return (
+    <ColumnsPickerPopover
+      {...buildProps({ config })}
+      onMove={(id, delta) =>
+        setConfig(moveColumn(config, id, delta, movableIds))
+      }
+    />
+  );
+}
+
+// Tab from the dialog until `target` has focus, as a keyboard user would.
+async function tabTo(user, target) {
+  for (let i = 0; i < 10 && document.activeElement !== target; i += 1) {
+    await user.tab();
+  }
+  expect(target).toHaveFocus();
 }
 
 describe("ColumnsPickerPopover", () => {
@@ -66,6 +100,7 @@ describe("ColumnsPickerPopover", () => {
     expect(
       within(dialog).getByRole("textbox", { name: "Search columns" }),
     ).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Column limit reached/)).toBeNull();
   });
 
   it("toggles, moves and resets through keyboard-operable controls (AC5/AC17)", async () => {
@@ -74,17 +109,19 @@ describe("ColumnsPickerPopover", () => {
     render(<ColumnsPickerPopover {...props} />);
     const dialog = screen.getByRole("dialog", { name: "Choose columns" });
 
-    const provider = within(dialog).getByRole("checkbox", { name: "Provider" });
-    provider.focus();
-    await user.keyboard(" ");
-    expect(props.onToggle).toHaveBeenCalledWith("builtin:provider");
-
-    const moveDown = within(dialog).getByRole("button", {
-      name: "Move Model down",
-    });
-    moveDown.focus();
+    await tabTo(
+      user,
+      within(dialog).getByRole("button", { name: "Move Model down" }),
+    );
     await user.keyboard("{Enter}");
     expect(props.onMove).toHaveBeenCalledWith("builtin:model", 1);
+
+    await user.tab();
+    expect(
+      within(dialog).getByRole("checkbox", { name: "Provider" }),
+    ).toHaveFocus();
+    await user.keyboard(" ");
+    expect(props.onToggle).toHaveBeenCalledWith("builtin:provider");
 
     await user.click(within(dialog).getByRole("checkbox", { name: "feature" }));
     expect(props.onToggle).toHaveBeenCalledWith("metadata:feature");
@@ -99,6 +136,42 @@ describe("ColumnsPickerPopover", () => {
 
     await user.click(within(dialog).getByRole("button", { name: "Close" }));
     expect(props.onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps focus on the pressed Move button while its column moves (AC17)", async () => {
+    const user = userEvent.setup();
+    render(<MovablePicker />);
+    const dialog = screen.getByRole("dialog", { name: "Choose columns" });
+    const moveDown = () =>
+      within(dialog).getByRole("button", { name: "Move Model down" });
+    const order = () =>
+      within(dialog)
+        .getAllByRole("checkbox")
+        .slice(1, 4)
+        .map((box) => box.getAttribute("aria-label"));
+
+    await tabTo(user, moveDown());
+    await user.keyboard("{Enter}");
+    expect(order()).toEqual(["Provider", "Model", "Application"]);
+    expect(moveDown()).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(order()).toEqual(["Provider", "Application", "Model"]);
+    expect(moveDown()).toHaveFocus();
+  });
+
+  it("moves focus to the opposite Move button when a column reaches the end of its group (AC17)", async () => {
+    const user = userEvent.setup();
+    render(<MovablePicker />);
+    const dialog = screen.getByRole("dialog", { name: "Choose columns" });
+    const button = (name) => within(dialog).getByRole("button", { name });
+
+    await user.click(button("Move Tokens down"));
+    expect(button("Move Tokens down")).toBeDisabled();
+    expect(button("Move Tokens up")).toHaveFocus();
+
+    await user.click(button("Move Provider up"));
+    expect(button("Move Provider up")).toBeDisabled();
+    expect(button("Move Provider down")).toHaveFocus();
   });
 
   it("filters entries by search text without touching the data", async () => {
@@ -181,5 +254,60 @@ describe("ColumnsPickerPopover", () => {
     expect(
       within(dialog).getByRole("textbox", { name: "Search columns" }),
     ).toBeInTheDocument();
+  });
+
+  it("says Application and Service are built-in when they are the only declarations (D3/R36)", () => {
+    render(
+      <ColumnsPickerPopover
+        {...buildProps({
+          config: DEFAULT_CONFIG,
+          declarations: [{ name: "application" }, { name: "service" }],
+        })}
+      />,
+    );
+    const dialog = screen.getByRole("dialog", { name: "Choose columns" });
+    expect(
+      within(dialog).getByText(
+        /No other custom properties declared \(Application and Service are already built-in columns\)/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).queryByText(/No custom properties declared/),
+    ).toBeNull();
+    expect(
+      within(dialog).getByRole("link", {
+        name: "Declare one in Custom Properties",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("disables columns that cannot be added once the column limit is reached", () => {
+    const names = Array.from(
+      { length: MAX_COLUMN_ENTRIES - DEFAULT_CONFIG.columns.length },
+      (_, i) => `p${i}`,
+    );
+    render(
+      <ColumnsPickerPopover
+        {...buildProps({
+          config: {
+            v: 1,
+            columns: [
+              ...DEFAULT_CONFIG.columns,
+              ...names.map((name) => ({ id: `metadata:${name}` })),
+            ],
+            hidden: [],
+          },
+          declarations: [...names, "extra"].map((name) => ({ name })),
+        })}
+      />,
+    );
+    const dialog = screen.getByRole("dialog", { name: "Choose columns" });
+    expect(
+      within(dialog).getByText(/Column limit reached/),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("checkbox", { name: "extra" }),
+    ).toBeDisabled();
+    expect(within(dialog).getByRole("checkbox", { name: "p0" })).toBeEnabled();
   });
 });

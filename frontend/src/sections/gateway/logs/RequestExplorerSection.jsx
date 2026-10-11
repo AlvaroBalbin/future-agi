@@ -13,8 +13,6 @@ import {
   MenuItem,
   ListItemIcon,
   ListItemText,
-  Snackbar,
-  Alert,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SectionHeader from "../components/SectionHeader";
@@ -74,9 +72,6 @@ const RequestExplorerSection = () => {
   const [isExporting, setIsExporting] = useState(false);
   const [columnsAnchor, setColumnsAnchor] = useState(null);
 
-  // --- Configurable columns (TH-7041) --------------------------------------
-  const requestColumns = useRequestColumns();
-
   // --- Debounced search -----------------------------------------------------
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -96,6 +91,11 @@ const RequestExplorerSection = () => {
 
   // --- View tab -------------------------------------------------------------
   const currentView = filters.view || "requests";
+
+  // --- Configurable columns (TH-7041) --------------------------------------
+  const requestColumns = useRequestColumns({
+    enabled: currentView === "requests",
+  });
 
   const handleViewChange = useCallback(
     (_event, newValue) => {
@@ -275,6 +275,8 @@ const RequestExplorerSection = () => {
             variant="outlined"
             startIcon={<Iconify icon="mdi:view-column-outline" width={20} />}
             onClick={(event) => setColumnsAnchor(event.currentTarget)}
+            // Edits need the user/org storage key to be saved (J4).
+            disabled={!requestColumns.storageKey}
             aria-haspopup="dialog"
             aria-expanded={Boolean(columnsAnchor)}
             aria-controls={columnsAnchor ? COLUMNS_POPOVER_ID : undefined}
@@ -294,7 +296,9 @@ const RequestExplorerSection = () => {
           stale={requestColumns.stale}
           visibleCount={requestColumns.visibleCount}
           totalCount={requestColumns.totalCount}
+          atCap={requestColumns.atCap}
           declarationStatus={requestColumns.declarationStatus}
+          reservedDeclared={requestColumns.reservedDeclared}
           unavailableCustomCount={requestColumns.unavailableCustomCount}
           onToggle={requestColumns.toggle}
           onMove={requestColumns.move}
@@ -303,21 +307,6 @@ const RequestExplorerSection = () => {
           onRetryDeclarations={requestColumns.retryDeclarations}
         />
       )}
-
-      <Snackbar
-        open={Boolean(requestColumns.storageNotice)}
-        autoHideDuration={6000}
-        onClose={requestColumns.dismissStorageNotice}
-        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-      >
-        <Alert
-          severity="warning"
-          variant="filled"
-          onClose={requestColumns.dismissStorageNotice}
-        >
-          {requestColumns.storageNotice}
-        </Alert>
-      </Snackbar>
 
       {/* ---- Quick filter chips ---- */}
       <Stack
@@ -355,7 +344,7 @@ const RequestExplorerSection = () => {
           filters={filters}
           setFilter={setFilter}
           setFilters={setFilters}
-          onSelectLog={(logId) => setSelectedLogId(logId)}
+          onSelectLog={setSelectedLogId}
           columns={requestColumns.columns}
         />
       ) : (

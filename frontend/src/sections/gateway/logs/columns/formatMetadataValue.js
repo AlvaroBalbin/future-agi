@@ -17,7 +17,6 @@ function stringify(value) {
   if (typeof value === "number" || typeof value === "boolean") {
     return String(value);
   }
-  if (typeof value === "bigint") return value.toString();
   try {
     const json = JSON.stringify(value);
     return typeof json === "string" ? json : "[unserializable]";
@@ -41,16 +40,24 @@ export function formatMetadataValue(value) {
     return { text: EMPTY_TEXT, full: null, truncated: false };
   }
 
+  // Limits count code points, so a cut never splits a surrogate pair. Only the
+  // first TOOLTIP_LIMIT + 1 are needed to apply both limits.
+  const chars = [];
+  for (const char of collapsed) {
+    if (chars.length > TOOLTIP_LIMIT) break;
+    chars.push(char);
+  }
+
   let text = collapsed;
   let full = collapsed;
   let truncated = false;
 
-  if (collapsed.length > PREVIEW_LIMIT) {
-    text = `${collapsed.slice(0, PREVIEW_LIMIT - 1)}${ELLIPSIS}`;
+  if (chars.length > PREVIEW_LIMIT) {
+    text = `${chars.slice(0, PREVIEW_LIMIT - 1).join("")}${ELLIPSIS}`;
     truncated = true;
   }
-  if (collapsed.length > TOOLTIP_LIMIT) {
-    full = `${collapsed.slice(0, TOOLTIP_LIMIT)}${TRUNCATED_SUFFIX}`;
+  if (chars.length > TOOLTIP_LIMIT) {
+    full = `${chars.slice(0, TOOLTIP_LIMIT).join("")}${TRUNCATED_SUFFIX}`;
     truncated = true;
   }
 

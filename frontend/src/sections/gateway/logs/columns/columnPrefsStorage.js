@@ -51,9 +51,6 @@ export function readConfig(key) {
     return { ok: false, config: null, reason: "read-failed" };
   }
   if (raw === null || raw === undefined) return { ok: true, config: null };
-  if (typeof raw !== "string") {
-    return { ok: false, config: null, reason: "invalid" };
-  }
 
   let parsed;
   try {

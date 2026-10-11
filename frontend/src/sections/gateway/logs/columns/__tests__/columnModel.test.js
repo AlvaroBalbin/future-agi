@@ -381,19 +381,24 @@ describe("config mutations", () => {
   });
 
   it("move swaps with the neighbour of the same kind and never displaces the locked column", () => {
-    const moved = moveColumn(DEFAULT_CONFIG, "builtin:provider", -1);
+    const movable = resolveColumns({
+      config: DEFAULT_CONFIG,
+      declarations: [],
+      status: "success",
+    }).movableIds;
+    const moved = moveColumn(DEFAULT_CONFIG, "builtin:provider", -1, movable);
     expect(moved.columns.map((c) => c.id).slice(0, 3)).toEqual([
       "builtin:startedAt",
       "builtin:provider",
       "builtin:model",
     ]);
-    expect(moveColumn(DEFAULT_CONFIG, "builtin:model", -1)).toEqual(
+    expect(moveColumn(DEFAULT_CONFIG, "builtin:model", -1, movable)).toEqual(
       DEFAULT_CONFIG,
     );
-    expect(moveColumn(DEFAULT_CONFIG, LOCKED_COLUMN_ID, 1)).toEqual(
+    expect(moveColumn(DEFAULT_CONFIG, LOCKED_COLUMN_ID, 1, movable)).toEqual(
       DEFAULT_CONFIG,
     );
-    expect(moveColumn(DEFAULT_CONFIG, "builtin:sessionId", 1)).toEqual(
+    expect(moveColumn(DEFAULT_CONFIG, "builtin:sessionId", 1, movable)).toEqual(
       DEFAULT_CONFIG,
     );
     const withCustom = {
@@ -405,13 +410,22 @@ describe("config mutations", () => {
       ],
       hidden: [],
     };
-    const customMoved = moveColumn(withCustom, "metadata:b", -1);
+    const customMovable = resolveColumns({
+      config: withCustom,
+      declarations: [decl("a"), decl("b")],
+      status: "success",
+    }).movableIds;
+    const customMoved = moveColumn(withCustom, "metadata:b", -1, customMovable);
     expect(customMoved.columns.slice(-2).map((c) => c.id)).toEqual([
       "metadata:b",
       "metadata:a",
     ]);
-    expect(moveColumn(withCustom, "metadata:a", -1)).toEqual(withCustom);
-    expect(moveColumn(withCustom, "metadata:missing", 1)).toEqual(withCustom);
+    expect(moveColumn(withCustom, "metadata:a", -1, customMovable)).toEqual(
+      withCustom,
+    );
+    expect(
+      moveColumn(withCustom, "metadata:missing", 1, customMovable),
+    ).toEqual(withCustom);
   });
 
   describe("move skips ids the picker does not list (J5)", () => {

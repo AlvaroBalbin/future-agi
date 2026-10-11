@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import { enqueueSnackbar } from "notistack";
 import { useAuthContext } from "src/auth/hooks/use-auth-context";
 import { useOrganization } from "src/contexts/OrganizationContext";
 import { useCustomProperties } from "../../custom-properties/hooks/useCustomProperties";
@@ -18,20 +19,11 @@ import {
   writeConfig,
 } from "./columnPrefsStorage";
 
-export const STORAGE_NOTICE = "Preferences could not be saved";
+const STORAGE_NOTICE = "Preferences could not be saved";
 
 function identitySegment(value) {
   if (value === null || value === undefined || value === "") return null;
   return String(value);
-}
-
-function queryStatus(query) {
-  if (query?.status === "success" || query?.status === "error") {
-    return query.status;
-  }
-  if (query?.isError) return "error";
-  if (query?.isSuccess) return "success";
-  return "pending";
 }
 
 /**
@@ -39,20 +31,24 @@ function queryStatus(query) {
  *
  * - identity: authenticated user id + current organization id; storage is not
  *   consulted until both are known (J4).
- * - declarations: the existing org-scoped `useCustomProperties()` query; custom
- *   columns render only while it is successful (J6).
+ * - declarations: the existing org-scoped `useCustomProperties()` query, run
+ *   only while `enabled`; custom columns render only while it is successful
+ *   and the picker's Retry row reports its failure (J6).
  * - persistence: browser localStorage, ids only (R13-R16).
  */
-export default function useRequestColumns({ viewId = COLUMN_VIEW_ID } = {}) {
+export default function useRequestColumns({ enabled = true } = {}) {
   const { user } = useAuthContext();
   const { currentOrganizationId, isReady } = useOrganization();
-  const declarationsQuery = useCustomProperties();
+  const declarationsQuery = useCustomProperties(
+    {},
+    { enabled, meta: { errorHandled: true } },
+  );
 
   const userId = identitySegment(user?.id);
   const orgId = identitySegment(currentOrganizationId);
   const storageKey = useMemo(
-    () => (isReady ? buildKey(userId, orgId, viewId) : null),
-    [isReady, userId, orgId, viewId],
+    () => (isReady ? buildKey(userId, orgId, COLUMN_VIEW_ID) : null),
+    [isReady, userId, orgId],
   );
 
   // Read synchronously when the key changes so no render ever shows another
@@ -62,12 +58,11 @@ export default function useRequestColumns({ viewId = COLUMN_VIEW_ID } = {}) {
     [storageKey],
   );
   const [edits, setEdits] = useState(null);
-  const [storageNotice, setStorageNotice] = useState(null);
 
   const config =
     edits && edits.key === storageKey ? edits.config : stored || DEFAULT_CONFIG;
 
-  const declarationStatus = queryStatus(declarationsQuery);
+  const declarationStatus = declarationsQuery.status;
   const declarations = useMemo(() => {
     const items = Array.isArray(declarationsQuery?.data)
       ? declarationsQuery.data
@@ -104,8 +99,9 @@ export default function useRequestColumns({ viewId = COLUMN_VIEW_ID } = {}) {
     (next) => {
       setEdits({ key: storageKey, config: next });
       if (!storageKey) return;
-      const result = writeConfig(storageKey, next);
-      setStorageNotice(result.ok ? null : STORAGE_NOTICE);
+      if (!writeConfig(storageKey, next).ok) {
+        enqueueSnackbar(STORAGE_NOTICE, { variant: "warning" });
+      }
     },
     [storageKey],
   );
@@ -128,17 +124,15 @@ export default function useRequestColumns({ viewId = COLUMN_VIEW_ID } = {}) {
   const reset = useCallback(() => {
     setEdits({ key: storageKey, config: DEFAULT_CONFIG });
     if (!storageKey) return;
-    const result = removeConfig(storageKey);
-    setStorageNotice(result.ok ? null : STORAGE_NOTICE);
+    if (!removeConfig(storageKey).ok) {
+      enqueueSnackbar(STORAGE_NOTICE, { variant: "warning" });
+    }
   }, [storageKey]);
 
-  const retryDeclarations = useCallback(() => {
-    if (typeof declarationsQuery?.refetch === "function") {
-      declarationsQuery.refetch();
-    }
-  }, [declarationsQuery]);
-
-  const dismissStorageNotice = useCallback(() => setStorageNotice(null), []);
+  const retryDeclarations = useCallback(
+    () => declarationsQuery.refetch(),
+    [declarationsQuery],
+  );
 
   return {
     columns: resolved.columns,
@@ -146,17 +140,16 @@ export default function useRequestColumns({ viewId = COLUMN_VIEW_ID } = {}) {
     stale: resolved.stale,
     visibleCount: resolved.visibleCount,
     totalCount: resolved.totalCount,
+    atCap: resolved.atCap,
     config,
     storageKey,
-    storageNotice,
     declarationStatus,
-    declarationError: declarationsQuery?.error ?? null,
+    reservedDeclared: resolved.reservedDeclared,
     unavailableCustomCount,
     toggle,
     move,
     remove,
     reset,
     retryDeclarations,
-    dismissStorageNotice,
   };
 }

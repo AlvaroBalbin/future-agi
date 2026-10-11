@@ -53,6 +53,13 @@ describe("formatMetadataValue (R17-R24, AC7, AC8)", () => {
     expect(big.full).toHaveLength(2000 + " [truncated]".length);
   });
 
+  it("cuts on code points so an emoji at either limit is never split", () => {
+    const preview = formatMetadataValue(`${"a".repeat(78)}😀${"b".repeat(10)}`);
+    expect(preview.text).toBe(`${"a".repeat(78)}😀…`);
+    const tooltip = formatMetadataValue(`${"c".repeat(1999)}😀d`);
+    expect(tooltip.full).toBe(`${"c".repeat(1999)}😀 [truncated]`);
+  });
+
   it("renders script-like strings literally (AC9)", () => {
     const value = "<img src=x onerror=alert(1)>";
     expect(formatMetadataValue(value).text).toBe(value);

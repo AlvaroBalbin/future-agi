@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import PropTypes from "prop-types";
 import {
   Alert,
@@ -28,98 +29,118 @@ function matches(label, query) {
   return label.toLowerCase().includes(query);
 }
 
-const ColumnEntryRow = ({ entry, onToggle, onMove }) => (
-  <Stack
-    direction="row"
-    alignItems="center"
-    sx={{
-      px: 1,
-      py: 0.25,
-      borderRadius: "4px",
-      "&:hover": { backgroundColor: "action.hover" },
-      opacity: entry.locked ? 0.6 : 1,
-    }}
-  >
-    <FormControlLabel
-      sx={{ mx: 0, flex: 1, minWidth: 0 }}
-      control={
-        <Checkbox
-          size="small"
-          checked={entry.checked}
-          disabled={entry.locked}
-          onChange={() => onToggle(entry.id)}
-          inputProps={{
-            "aria-label": entry.locked
-              ? `${entry.label} (always visible)`
-              : entry.label,
-          }}
-          checkedIcon={<Iconify icon="mdi:checkbox-marked" width={20} />}
-          icon={
-            <Iconify
-              icon="mdi:checkbox-blank-outline"
-              width={20}
-              sx={{ color: "text.disabled" }}
-            />
-          }
-          sx={{ p: 0.5 }}
-        />
-      }
-      label={
-        <Typography
-          variant="body2"
-          noWrap
-          sx={{ fontSize: "13px", ml: 0.5 }}
-          title={entry.label}
-        >
-          {entry.label}
-          {entry.locked && (
-            <Iconify
-              icon="mdi:lock-outline"
-              width={12}
-              sx={{
-                ml: 0.5,
-                verticalAlign: "text-bottom",
-                color: "text.disabled",
-              }}
-            />
-          )}
-        </Typography>
-      }
-    />
-    {!entry.locked && (
-      <Stack direction="row" spacing={0}>
-        <IconButton
-          size="small"
-          aria-label={`Move ${entry.label} up`}
-          disabled={!entry.canMoveUp}
-          onClick={() => onMove(entry.id, -1)}
-        >
-          <Iconify icon="mdi:chevron-up" width={18} />
-        </IconButton>
-        <IconButton
-          size="small"
-          aria-label={`Move ${entry.label} down`}
-          disabled={!entry.canMoveDown}
-          onClick={() => onMove(entry.id, 1)}
-        >
-          <Iconify icon="mdi:chevron-down" width={18} />
-        </IconButton>
-      </Stack>
-    )}
-  </Stack>
-);
+const ColumnEntryRow = ({ entry, onToggle, onMove, atCap = false }) => {
+  const upRef = useRef(null);
+  const downRef = useRef(null);
+  // At the cap a column not yet in the config cannot be added (toggleColumn).
+  const disabled = entry.locked || (atCap && !entry.inConfig);
+
+  // Keep focus on this column's arrow after the move commits; once the column
+  // reaches the end of its group that arrow is disabled, so use the other
+  // (R39-R42).
+  const handleMove = (delta) => {
+    flushSync(() => onMove(entry.id, delta));
+    const [pressed, opposite] = delta < 0 ? [upRef, downRef] : [downRef, upRef];
+    (pressed.current.disabled ? opposite : pressed).current.focus();
+  };
+
+  return (
+    <Stack
+      direction="row"
+      alignItems="center"
+      sx={{
+        px: 1,
+        py: 0.25,
+        borderRadius: "4px",
+        "&:hover": { backgroundColor: "action.hover" },
+        opacity: disabled ? 0.6 : 1,
+      }}
+    >
+      <FormControlLabel
+        sx={{ mx: 0, flex: 1, minWidth: 0 }}
+        control={
+          <Checkbox
+            size="small"
+            checked={entry.checked}
+            disabled={disabled}
+            onChange={() => onToggle(entry.id)}
+            inputProps={{
+              "aria-label": entry.locked
+                ? `${entry.label} (always visible)`
+                : entry.label,
+            }}
+            checkedIcon={<Iconify icon="mdi:checkbox-marked" width={20} />}
+            icon={
+              <Iconify
+                icon="mdi:checkbox-blank-outline"
+                width={20}
+                sx={{ color: "text.disabled" }}
+              />
+            }
+            sx={{ p: 0.5 }}
+          />
+        }
+        label={
+          <Typography
+            variant="body2"
+            noWrap
+            sx={{ fontSize: "13px", ml: 0.5 }}
+            title={entry.label}
+          >
+            {entry.label}
+            {entry.locked && (
+              <Iconify
+                icon="mdi:lock-outline"
+                width={12}
+                sx={{
+                  ml: 0.5,
+                  verticalAlign: "text-bottom",
+                  color: "text.disabled",
+                }}
+              />
+            )}
+          </Typography>
+        }
+      />
+      {!entry.locked && (
+        <Stack direction="row" spacing={0}>
+          <IconButton
+            ref={upRef}
+            size="small"
+            aria-label={`Move ${entry.label} up`}
+            disabled={!entry.canMoveUp}
+            onClick={() => handleMove(-1)}
+          >
+            <Iconify icon="mdi:chevron-up" width={18} />
+          </IconButton>
+          <IconButton
+            ref={downRef}
+            size="small"
+            aria-label={`Move ${entry.label} down`}
+            disabled={!entry.canMoveDown}
+            onClick={() => handleMove(1)}
+          >
+            <Iconify icon="mdi:chevron-down" width={18} />
+          </IconButton>
+        </Stack>
+      )}
+    </Stack>
+  );
+};
 
 ColumnEntryRow.propTypes = {
   entry: PropTypes.shape({
     id: PropTypes.string.isRequired,
     label: PropTypes.string.isRequired,
     checked: PropTypes.bool.isRequired,
+    inConfig: PropTypes.bool,
     locked: PropTypes.bool,
     canMoveUp: PropTypes.bool,
     canMoveDown: PropTypes.bool,
   }).isRequired,
   onToggle: PropTypes.func.isRequired,
   onMove: PropTypes.func.isRequired,
+  atCap: PropTypes.bool,
 };
 
 const GroupHeading = ({ children }) => (
@@ -147,8 +168,10 @@ const ColumnsPickerPopover = ({
   stale,
   visibleCount,
   totalCount,
+  atCap = false,
   declarationStatus,
-  unavailableCustomCount,
+  reservedDeclared = false,
+  unavailableCustomCount = 0,
   onToggle,
   onMove,
   onRemove,
@@ -290,13 +313,24 @@ const ColumnsPickerPopover = ({
               color="text.secondary"
               sx={{ px: 1, py: 0.5, display: "block" }}
             >
-              No custom properties declared.{" "}
+              {reservedDeclared
+                ? "No other custom properties declared (Application and Service are already built-in columns)."
+                : "No custom properties declared."}{" "}
               <Link
                 component={RouterLink}
                 to={paths.dashboard.gateway.customProperties}
               >
                 Declare one in Custom Properties
               </Link>
+            </Typography>
+          )}
+          {declarationStatus === "success" && atCap && (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ px: 1, py: 0.5, display: "block" }}
+            >
+              Column limit reached. Reset to default to add more.
             </Typography>
           )}
           {declarationStatus === "success" &&
@@ -306,6 +340,7 @@ const ColumnsPickerPopover = ({
                 entry={entry}
                 onToggle={onToggle}
                 onMove={onMove}
+                atCap={atCap}
               />
             ))}
 
@@ -366,18 +401,16 @@ ColumnsPickerPopover.propTypes = {
   stale: PropTypes.arrayOf(PropTypes.string).isRequired,
   visibleCount: PropTypes.number.isRequired,
   totalCount: PropTypes.number.isRequired,
+  atCap: PropTypes.bool,
   declarationStatus: PropTypes.oneOf(["pending", "error", "success"])
     .isRequired,
+  reservedDeclared: PropTypes.bool,
   unavailableCustomCount: PropTypes.number,
   onToggle: PropTypes.func.isRequired,
   onMove: PropTypes.func.isRequired,
   onRemove: PropTypes.func.isRequired,
   onReset: PropTypes.func.isRequired,
   onRetryDeclarations: PropTypes.func.isRequired,
-};
-
-ColumnsPickerPopover.defaultProps = {
-  unavailableCustomCount: 0,
 };
 
 export default ColumnsPickerPopover;

@@ -31,6 +31,7 @@ describe("MetadataCell keyboard access (R41/AC17)", () => {
     const value = `${"tenant-".repeat(20)}end`;
     const { cell } = renderCell(value);
     const preview = within(cell).getByText(`${value.slice(0, 79)}…`);
+    expect(preview).toHaveAttribute("aria-label", value);
     expect(screen.queryByRole("tooltip")).toBeNull();
 
     await user.tab();
