@@ -200,6 +200,32 @@ def test_rollup_preserves_unknown_choice_with_neutral_tone_and_error_only_row():
     assert child_row["explanation"] == "execution failed"
 
 
+def test_rollup_reads_choices_under_the_detail_normalized_output_type():
+    # Trace detail labels configs with derive_output_type(), which names a
+    # choices template "deterministic" (and Pass/Fail "pass_fail").
+    configs = {
+        "tone": {"name": "Tone", "output_type": "deterministic", "choices": ["neutral"]},
+        "helpful": {"name": "Helpful", "output_type": "pass_fail"},
+    }
+    rollups = build_eval_rollup(
+        [
+            _row(
+                eval_config_id="tone",
+                output_bool=None,
+                output_str_list=["apologetic"],
+            ),
+            _row(eval_config_id="helpful", log_id="2", output_bool=False),
+        ],
+        configs,
+        "root",
+    )
+
+    tone, helpful = rollups["root"]["evals"]
+    assert tone["aggregate"] == {"neutral": 0, "apologetic": 1}
+    assert tone["spans"][0]["value"] == ["apologetic"]
+    assert helpful["aggregate"] == {"pass": 0, "fail": 1}
+
+
 def test_normalize_verdict_only_maps_boolean_verdicts():
     assert normalize_verdict(" Pass ") == "pass"
     assert normalize_verdict("fail") == "fail"

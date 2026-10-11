@@ -18,7 +18,10 @@ _NON_COMPLETED_STATUSES = frozenset({"pending", "running", "skipped", "errored"}
 
 
 def _output_kind(output_type: str | None) -> str:
-    return (output_type or "").replace("/", "_").replace(" ", "_").upper()
+    kind = (output_type or "").replace("/", "_").replace(" ", "_").upper()
+    # Trace detail labels configs with derive_output_type(), which names a
+    # choices template "deterministic".
+    return "CHOICES" if kind == "DETERMINISTIC" else kind
 
 
 def _row_status(row: Mapping[str, Any]) -> str:
