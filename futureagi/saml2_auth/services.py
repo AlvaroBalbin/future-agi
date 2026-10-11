@@ -344,10 +344,8 @@ def claim_attempt(*, candidate_key: str, binder: str) -> tuple[Any, bytes]:
             id=candidate.attempt_id
         )
         if candidate.expires_at <= now:
-            candidate.delete()
             raise SamlDenied("candidate_unavailable")
         if attempt.state != SamlLoginAttempt.State.PENDING or attempt.expires_at <= now:
-            candidate.delete()
             raise SamlDenied("attempt_unavailable")
         binder_hash = hashlib.sha256(binder.encode()).hexdigest()
         if not hmac.compare_digest(binder_hash, attempt.binder_hash):

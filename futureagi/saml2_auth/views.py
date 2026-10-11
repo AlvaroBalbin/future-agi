@@ -185,16 +185,6 @@ def _saml_denial_redirect(reason):
     return HttpResponseRedirect(f"{default_error_next_url}&reason={encoded}")
 
 
-def record_failure_for_candidate(candidate_key, reason):
-    candidate = (
-        SamlResponseCandidate.objects.filter(candidate_key=candidate_key)
-        .only("attempt_id")
-        .first()
-    )
-    if candidate:
-        record_failure(candidate.attempt_id, reason)
-
-
 class ACSView(APIView):
     _gm = GeneralMethods()
     parser_classes = [FormParser, MultiPartParser]
@@ -311,14 +301,10 @@ class CompleteView(APIView):
         except SamlDenied as exc:
             if claimed_attempt_id:
                 record_failure(claimed_attempt_id, exc.reason)
-            elif candidate_key:
-                record_failure_for_candidate(candidate_key, exc.reason)
             response = _saml_denial_redirect(exc.reason)
         except (SAMLMetadataModel.DoesNotExist, SamlResponseCandidate.DoesNotExist):
             if claimed_attempt_id:
                 record_failure(claimed_attempt_id, "response_invalid")
-            elif candidate_key:
-                record_failure_for_candidate(candidate_key, "response_invalid")
             response = _saml_denial_redirect("response_invalid")
         except Exception as exc:
             security_logger.warning(
@@ -326,8 +312,6 @@ class CompleteView(APIView):
             )
             if claimed_attempt_id:
                 record_failure(claimed_attempt_id, "response_invalid")
-            elif candidate_key:
-                record_failure_for_candidate(candidate_key, "response_invalid")
             response = _saml_denial_redirect("response_invalid")
         if cookie_name:
             response.delete_cookie(cookie_name, path="/saml2_auth/")

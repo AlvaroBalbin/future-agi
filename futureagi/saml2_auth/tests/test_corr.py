@@ -4,6 +4,8 @@ import pytest
 from rest_framework.test import APIClient
 
 from accounts.models.auth_token import AuthToken
+from saml2_auth.models import SamlLoginAttempt
+from saml2_auth.services import claim_attempt
 from saml2_auth.tests.conftest import bound_attempt, complete, post_acs
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
@@ -95,3 +97,26 @@ def test_initiating_jar_bound_two_jars(
     initiator_completion = complete(initiator, candidate_key)
     assert "sso_token" in initiator_completion["Location"]
     assert AuthToken.no_workspace_objects.filter(user=saml_tenants.a2).count() == 1
+
+
+def test_losing_duplicate_completion_leaves_the_claimed_attempt_alone(
+    api_client, idp_a, saml_tenants, signed_a_response
+):
+    """A duplicate ACS post that loses the claim must not fail the login in flight."""
+
+    attempt = bound_attempt(api_client, email=saml_tenants.a2.email)
+    payload = signed_a_response(
+        request_id=attempt.request_id, email=saml_tenants.a2.email
+    )
+    winner = post_acs(api_client, attempt.relay, payload)
+    loser = post_acs(api_client, attempt.relay, payload)
+    # The winner has claimed and is still issuing when the loser completes.
+    claim_attempt(
+        candidate_key=winner,
+        binder=api_client.cookies[attempt.binder_cookie].value,
+    )
+
+    denied = complete(api_client, loser)
+
+    assert "sso_token" not in denied["Location"]
+    assert SamlLoginAttempt.objects.get(relay_key=attempt.relay).state == "claimed"
