@@ -83,8 +83,12 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
         logger.info(
             f"PromptStream connection closed: session={self.session_uuid}, code={close_code}"
         )
-        for task in tuple(self._tasks):
-            task.cancel()
+        # A dropped socket must not lose a paid-for run: the runner saves its
+        # output after the loop and the UI polls for it. Only a revoked SAML
+        # session stops its work.
+        if self._guard.revoked:
+            for task in tuple(self._tasks):
+                task.cancel()
 
     async def receive_json(self, content):
         if not await self._guard.ensure_live(inbound=True):

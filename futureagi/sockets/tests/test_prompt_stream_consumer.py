@@ -247,3 +247,24 @@ def test_execute_template_allows_null_workspace_template_in_same_org(monkeypatch
     # permission reasons).
     for call in consumer.close.await_args_list:
         assert call.kwargs.get("code") != WS_CLOSE_CODE_PERMISSION_DENIED
+
+
+# ---------------------------------------------------------------------------
+# Disconnect — a run keeps going (and saves its output) when the socket drops;
+# only a revoked SAML session cancels it.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("revoked", [False, True])
+def test_disconnect_cancels_runs_only_for_a_revoked_session(revoked):
+    async def scenario():
+        consumer = _make_consumer()
+        consumer._guard.revoked = revoked
+        run = consumer._create_task(asyncio.sleep(60))
+        await consumer.disconnect(1006)
+        await asyncio.sleep(0)
+        cancelled = run.cancelled()
+        run.cancel()
+        return cancelled
+
+    assert asyncio.run(scenario()) is revoked
