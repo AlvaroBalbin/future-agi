@@ -572,11 +572,27 @@ class IDPUploadViews(viewsets.ModelViewSet):
         # relay_state is unique and no longer read for login (each attempt
         # gets its own relay key), so the server assigns an opaque value
         # rather than the empty default every upload would otherwise share.
-        SAMLMetadataModel.objects.create(
-            organization=organization,
-            relay_state=f"idp-{secrets.token_hex(16)}",
-            **data,
-        )
+        relay_state = f"idp-{secrets.token_hex(16)}"
+        with transaction.atomic():
+            # organization is one-to-one, so a deleted IdP still holds the
+            # organization's row: reuse it, keeping its generation rising.
+            deleted_row = (
+                SAMLMetadataModel.all_objects.select_for_update()
+                .filter(organization=organization, deleted=True)
+                .first()
+            )
+            if deleted_row is None:
+                SAMLMetadataModel.objects.create(
+                    organization=organization, relay_state=relay_state, **data
+                )
+            else:
+                for field, value in data.items():
+                    setattr(deleted_row, field, value)
+                deleted_row.deleted = False
+                deleted_row.deleted_at = None
+                deleted_row.relay_state = relay_state
+                deleted_row.security_generation += 1
+                deleted_row.save()
         return self._gm.success_response("Success")
 
     @swagger_auto_schema(

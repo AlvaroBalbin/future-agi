@@ -91,3 +91,21 @@ def test_each_organization_can_upload_its_own_idp(saml_tenants, idp_metadata):
     assert len(relay_states) == 2
     assert all(relay_states)
     assert len(set(relay_states)) == 2
+
+
+def test_organization_can_upload_an_idp_after_deleting_one(
+    saml_tenants, idp_a, idp_metadata
+):
+    """The deleted IdP still holds the organization's one-to-one row."""
+
+    client = _as_org_owner(saml_tenants.a1)
+    assert client.delete(f"/saml2_auth/idp-uploads/{idp_a.id}/").status_code == 200
+    idp_a.refresh_from_db(from_queryset=SAMLMetadataModel.all_objects)
+    deleted_generation = idp_a.security_generation
+
+    response = _upload_idp(client, idp_metadata["google"], "tenant-a-new-idp")
+
+    assert response.status_code == 200, response.content
+    live = SAMLMetadataModel.objects.get(organization=saml_tenants.org_a)
+    assert live.meta == idp_metadata["google"]
+    assert live.security_generation > deleted_generation
