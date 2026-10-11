@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
+from django.core.management import call_command
+from django.utils import timezone
 from rest_framework.test import APIClient
+
+from accounts.authentication import generate_encrypted_message
+from accounts.models.auth_token import AuthToken, AuthTokenType
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
@@ -39,3 +46,26 @@ def test_revocation_after_issuance(idp_a, make_saml_token, saml_tenants):
 
     assert revoked.status_code == 401
     assert "token_inactive" in revoked.content.decode()
+
+
+def test_revoke_unscoped_tokens_ends_cached_sessions(saml_tenants):
+    """A legacy session already in the token cache stops working once revoked."""
+
+    row = AuthToken.no_workspace_objects.create(
+        user=saml_tenants.a1,
+        auth_type=AuthTokenType.ACCESS.value,
+        last_used_at=timezone.now(),
+        is_active=True,
+    )
+    token = generate_encrypted_message(
+        {"user_id": str(saml_tenants.a1.id), "id": str(row.id)}
+    )
+    client = _bearer_client(token)
+    assert client.get("/accounts/organizations/current/").status_code == 200
+
+    call_command(
+        "revoke_unscoped_tokens",
+        created_before=(timezone.now() + timedelta(seconds=1)).isoformat(),
+    )
+
+    assert client.get("/accounts/organizations/current/").status_code == 401

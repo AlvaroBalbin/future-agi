@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from django.core.cache import cache
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
@@ -30,5 +31,9 @@ class Command(BaseCommand):
         if options["dry_run"]:
             self.stdout.write(f"Would revoke {count} unscoped access token(s).")
             return
+        token_ids = list(tokens.values_list("id", flat=True))
         tokens.update(is_active=False)
+        # The cached-session path does not re-read is_active, so a session
+        # in use stays live until its cache entry goes.
+        cache.delete_many([f"access_token_{token_id}" for token_id in token_ids])
         self.stdout.write(f"Revoked {count} unscoped access token(s).")
