@@ -134731,8 +134731,7 @@
                 },
                 "type": {
                     "title": "Type",
-                    "type": "string",
-                    "minLength": 1
+                    "type": "string"
                 },
                 "value": {
                     "title": "Value",

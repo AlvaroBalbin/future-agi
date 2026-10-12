@@ -230,7 +230,8 @@ class PersonaDetailsSerializer(serializers.Serializer):
 class EvaluationResultSerializer(serializers.Serializer):
     id = serializers.CharField()
     name = serializers.CharField()
-    type = serializers.CharField()
+    # Blank on an entry with no stored output type: pending, timed out, skipped.
+    type = serializers.CharField(allow_blank=True)
     value = serializers.JSONField(allow_null=True)
     score = serializers.FloatField(allow_null=True)
     passed = serializers.BooleanField(allow_null=True)

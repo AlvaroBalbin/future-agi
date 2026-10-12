@@ -22385,7 +22385,6 @@ export interface SimulateRunV3EvaluationResultApi {
   id: string;
   /** @minLength 1 */
   name: string;
-  /** @minLength 1 */
   type: string;
   value: SimulateRunV3EvaluationResultApiValue;
   score: number;

@@ -47064,7 +47064,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
     zod.object({
       id: zod.string().min(1),
       name: zod.string().min(1),
-      type: zod.string().min(1),
+      type: zod.string(),
       value: zod.object({}).passthrough(),
       score: zod.number(),
       passed: zod.boolean(),
@@ -48061,7 +48061,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         zod.object({
           id: zod.string().min(1),
           name: zod.string().min(1),
-          type: zod.string().min(1),
+          type: zod.string(),
           value: zod.object({}).passthrough(),
           score: zod.number(),
           passed: zod.boolean(),

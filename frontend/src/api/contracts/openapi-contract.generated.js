@@ -85607,7 +85607,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         type: {
           title: "Type",
           type: "string",
-          minLength: 1,
         },
         value: {
           title: "Value",

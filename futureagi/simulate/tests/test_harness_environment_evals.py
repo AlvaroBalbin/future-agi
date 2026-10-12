@@ -984,6 +984,62 @@ def test_a_broker_failure_stops_further_dispatch_and_clears_the_remaining_stamps
             "attempted because it stopped, are cleared together in one "
             "transaction"
         )
+        # ... and each reads as it did before the add: no placeholder that
+        # nothing will fill, and an eval side that is closed again.
+        assert call_execution.eval_outputs == {}
+        assert call_execution.call_metadata["eval_completed"] is True
+        assert call_execution.call_metadata["eval_started"] is True
+    assert first_call.eval_outputs == {str(config.id): {"status": "pending"}}
+    assert first_call.call_metadata["eval_completed"] is False
+    finished_run.refresh_from_db()
+    assert finished_run.status == TestExecution.ExecutionStatus.EVALUATING, (
+        "one job was dispatched, so the run waits for it"
+    )
+
+
+@pytest.mark.django_db
+def test_a_broker_failure_on_the_first_job_puts_the_run_back(
+    env_client,
+    environment,
+    finished_run,
+    workspace,
+    dispatch,
+    django_capture_on_commit_callbacks,
+):
+    """When not one grading job reaches the broker, the calls read as they
+    did before the add and the run is completed again with the
+    `completed_at` it had. Nothing is left waiting on a job that never
+    started, so the scoring sweeper finds nothing to time out."""
+    from simulate.tasks.chat_sim import _sweep_stuck_scoring_pass
+
+    template = _template("no_misselling", ["conversation"], tags=("Conversation",))
+    finished_at = timezone.now() - timedelta(hours=1)
+    TestExecution.objects.filter(id=finished_run.id).update(completed_at=finished_at)
+    calls = [_call(finished_run, metadata=_graded()) for _ in range(2)]
+    dispatch.side_effect = RuntimeError("broker unreachable")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        response = _run_add(
+            env_client, environment, finished_run, workspace, template.name
+        )
+
+    assert response.status_code == 202, response.content
+    assert dispatch.call_count == 1, "the batch stops at the first failure"
+    config = _bound_config(environment)
+    for call_execution in calls:
+        call_execution.refresh_from_db()
+        assert call_execution.eval_outputs == {}
+        assert call_execution.call_metadata["eval_completed"] is True
+        assert call_execution.call_metadata["eval_started"] is True
+        assert str(config.id) not in call_execution.call_metadata.get(
+            EVAL_QUEUED_KEY, {}
+        )
+    finished_run.refresh_from_db()
+    assert finished_run.status == TestExecution.ExecutionStatus.COMPLETED
+    assert finished_run.completed_at == finished_at
+
+    counts = _sweep_stuck_scoring_pass(timezone.now() + timedelta(hours=1))
+    assert (counts["scanned"], counts["timed_out"], counts["settled"]) == (0, 0, 0)
 
 
 # --- Run-level add, continued: skip reasons, refusals, the 404 -------------
