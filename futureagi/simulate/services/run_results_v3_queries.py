@@ -16,6 +16,7 @@ from django.db.models import (
     Case,
     CharField,
     Count,
+    Exists,
     Expression,
     F,
     FloatField,
@@ -847,6 +848,18 @@ def run_call_rows_queryset(queryset: QuerySet) -> QuerySet:
     )
 
 
+def _sub_goal_q(values: list[str]) -> Q:
+    sub_goal_query = Q(pk__in=[])
+    for value in values:
+        sub_goal_query |= Q(
+            call_metadata__hosted_harness_receipt__sub_goals__contains=[{"name": value}]
+        )
+        sub_goal_query |= Q(call_metadata__sub_goals__contains=[value])
+        sub_goal_query |= Q(call_metadata__sub_goals__contains=[{"name": value}])
+        sub_goal_query |= _NO_RESULT_SUB_GOALS & _authored_sub_goal_q(value)
+    return sub_goal_query
+
+
 def apply_run_call_query(queryset: QuerySet, query: dict[str, Any]) -> QuerySet:
     search = str(query.get("search") or "").strip()
     filters = query.get("filters") or {}
@@ -862,26 +875,34 @@ def apply_run_call_query(queryset: QuerySet, query: dict[str, Any]) -> QuerySet:
         queryset = queryset.filter(id__in=values)
     if values := filters.get("goal"):
         queryset = queryset.filter(result_goal__in=values)
+    if values := filters.get("goal_not"):
+        queryset = queryset.filter(
+            ~Q(result_goal__in=values) | Q(result_goal__isnull=True)
+        )
     if values := filters.get("status"):
         queryset = queryset.filter(
             result_outcome__in=[str(value).lower() for value in values]
+        )
+    if values := filters.get("status_not"):
+        queryset = queryset.filter(
+            ~Q(result_outcome__in=[str(value).lower() for value in values])
+            | Q(result_outcome__isnull=True)
         )
     if values := filters.get("goal_outcome"):
         from simulate.services.run_dashboard_v3 import annotate_goal_outcome
 
         queryset = annotate_goal_outcome(queryset).filter(dashboard_goal__in=values)
     if values := filters.get("sub_goal"):
-        sub_goal_query = Q(pk__in=[])
-        for value in values:
-            sub_goal_query |= Q(
-                call_metadata__hosted_harness_receipt__sub_goals__contains=[
-                    {"name": value}
-                ]
+        queryset = queryset.filter(_sub_goal_q(values))
+    if values := filters.get("sub_goal_not"):
+        # NOT EXISTS, so a call whose sub-goal JSON is NULL still counts as "not".
+        queryset = queryset.filter(
+            ~Exists(
+                CallExecution._base_manager.filter(
+                    _sub_goal_q(values), pk=OuterRef("pk")
+                )
             )
-            sub_goal_query |= Q(call_metadata__sub_goals__contains=[value])
-            sub_goal_query |= Q(call_metadata__sub_goals__contains=[{"name": value}])
-            sub_goal_query |= _NO_RESULT_SUB_GOALS & _authored_sub_goal_q(value)
-        queryset = queryset.filter(sub_goal_query)
+        )
 
     group_by = query.get("group_by")
     group_key = query.get("group_key")

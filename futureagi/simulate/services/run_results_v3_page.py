@@ -65,6 +65,7 @@ METRIC_FIELDS = {
 # Orderings the scan does not reproduce; the ORM path serves them.
 SQL_ORDERED_FIELDS = frozenset(ORDERING_FIELDS) - {"started_at"}
 SUBSET_PARAMS = ("search", "filters", "group_by", "group_key", "ordering")
+STATUS_FILTERS = ("status", "status_not")
 # CSAT and other per-call metrics can still land after the run completes
 # without moving anything in the cache key, so a cached pass stays short-lived.
 CACHE_TIMEOUT = 5 * 60
@@ -295,6 +296,22 @@ def _scan_ordering(query: dict[str, Any]) -> str | None:
     return "-started_at" if ordering.startswith("-") else "started_at"
 
 
+def _subset(query: dict[str, Any]) -> dict[str, Any]:
+    subset = {name: query.get(name) for name in SUBSET_PARAMS}
+    if subset["group_key"] is None:
+        # A grouping with no key filters nothing, so every grouping reads the same rows.
+        subset["group_by"] = None
+    return subset
+
+
+def _has_subset(query: dict[str, Any]) -> bool:
+    return bool(
+        query.get("search")
+        or query.get("filters")
+        or query.get("group_key") is not None
+    )
+
+
 def run_calls_page(
     execution: TestExecution,
     query: dict[str, Any],
@@ -302,14 +319,10 @@ def run_calls_page(
     base_queryset: Callable[[], QuerySet],
 ) -> dict[str, Any]:
     scores = functools.cache(lambda: _score_expressions(execution, columns))
-    subset = {name: query.get(name) for name in SUBSET_PARAMS}
-    if subset["group_key"] is None:
-        # A grouping with no key filters nothing, so every grouping reads the same rows.
-        subset["group_by"] = None
     ordering = _scan_ordering(query)
     rows, rows_fresh = _cached_call_values(
         execution,
-        subset,
+        _subset(query),
         columns,
         lambda: (
             scan_call_values(execution, columns, ordering)
@@ -319,11 +332,7 @@ def run_calls_page(
             )
         ),
     )
-    has_subset = bool(
-        query.get("search")
-        or query.get("filters")
-        or query.get("group_key") is not None
-    )
+    has_subset = _has_subset(query)
     execution_rows, execution_rows_fresh = (
         _cached_call_values(
             execution,
@@ -335,6 +344,33 @@ def run_calls_page(
         if has_subset
         else (rows, rows_fresh)
     )
+    filters = query.get("filters") or {}
+    if not any(filters.get(key) for key in STATUS_FILTERS):
+        status_rows = rows
+    else:
+        # The status chips count every outcome under the other filters.
+        status_query = {
+            **query,
+            "filters": {
+                key: value
+                for key, value in filters.items()
+                if key not in STATUS_FILTERS
+            },
+        }
+        status_rows = (
+            _cached_call_values(
+                execution,
+                _subset(status_query),
+                columns,
+                lambda: _call_values(
+                    apply_run_call_query(base_queryset(), status_query),
+                    columns,
+                    scores(),
+                ),
+            )[0]
+            if _has_subset(status_query)
+            else execution_rows
+        )
     start = (query["page"] - 1) * query["page_size"]
     return {
         "rows": rows,
@@ -344,6 +380,7 @@ def run_calls_page(
         "page_ids": [row["id"] for row in rows[start : start + query["page_size"]]],
         "summary": summarize_call_values(rows),
         "execution_summary": summarize_call_values(execution_rows),
+        "status_counts": summarize_call_values(status_rows)["outcomes"],
         "count": len(rows),
     }
 

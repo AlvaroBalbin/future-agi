@@ -95,7 +95,16 @@ class RunCallFiltersSerializer(serializers.Serializer):
     )
 
     def validate_filters(self, value):
-        allowed = {"goal", "sub_goal", "status", "goal_outcome", "call_execution_id"}
+        allowed = {
+            "goal",
+            "goal_not",
+            "sub_goal",
+            "sub_goal_not",
+            "status",
+            "status_not",
+            "goal_outcome",
+            "call_execution_id",
+        }
         unknown = set(value) - allowed
         if unknown:
             raise serializers.ValidationError(
@@ -108,7 +117,10 @@ class RunCallFiltersSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     f"Filter '{field}' must be a list of strings."
                 )
-        invalid_statuses = set(value.get("status", [])) - set(OUTCOME_LABELS)
+        invalid_statuses = {
+            *value.get("status", []),
+            *value.get("status_not", []),
+        } - set(OUTCOME_LABELS)
         if invalid_statuses:
             raise serializers.ValidationError(
                 f"Unsupported statuses: {', '.join(sorted(invalid_statuses))}."
@@ -317,6 +329,8 @@ class RunCallsV3ResponseSerializer(serializers.Serializer):
     results = RunCallSerializer(many=True)
     groups = RunGroupSerializer(many=True)
     facets = RunFacetsSerializer()
+    # Outcome counts under every filter but the status ones, for the status chips.
+    status_counts = OutcomeCountsSerializer()
     evaluation_columns = EvaluationColumnSerializer(many=True)
 
 
@@ -608,6 +622,7 @@ class RunCallsV3View(APIView):
                 lambda: _facet_calls(execution, call_ids),
                 facets_cache_key,
             ),
+            "status_counts": calls_page["status_counts"],
             "evaluation_columns": columns,
         }
         return Response(response)

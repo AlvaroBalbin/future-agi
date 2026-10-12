@@ -351,6 +351,7 @@ export function useRunCalls(executionId, opts = {}) {
         totalPages: data.total_pages ?? 1,
       };
     }, [data]);
+  const statusCounts = useMemo(() => data?.status_counts ?? {}, [data]);
 
   return {
     tasks,
@@ -358,6 +359,7 @@ export function useRunCalls(executionId, opts = {}) {
     count,
     groups,
     facets,
+    statusCounts,
     summary,
     totalPages,
     agentType: data?.execution?.agent_type ?? null,

@@ -96,6 +96,8 @@ class TestRunCallsV3Contract:
             ({"filters": "[]"}, "filters"),
             ({"filters": json.dumps({"persona": ["x"]})}, "filters"),
             ({"filters": json.dumps({"status": ["green"]})}, "filters"),
+            ({"filters": json.dumps({"status_not": ["green"]})}, "filters"),
+            ({"filters": json.dumps({"outcome_not": ["passed"]})}, "filters"),
             ({"group_by": "persona"}, "group_by"),
             ({"ordering": "csat"}, "ordering"),
             ({"ordering": "--started_at"}, "ordering"),
@@ -406,3 +408,110 @@ def test_each_ordering_sorts_by_its_own_field(
     assert [row["id"] for row in body["results"]] == [
         str(sortable_calls[index].id) for index in expected
     ]
+
+
+def _ids(client, execution: TestExecution, filters: dict[str, Any]) -> set[str]:
+    body = _get(client, execution, page_size=500, filters=json.dumps(filters)).json()
+    return {row["id"] for row in body["results"]}
+
+
+@pytest.fixture
+def sub_goal_calls(calls) -> list[CallExecution]:
+    for call, sub_goals in zip(calls, [["a"], ["a", "b"], ["b"], None, []]):
+        if sub_goals is not None:
+            call.call_metadata = {
+                **call.call_metadata,
+                "hosted_harness_receipt": {
+                    "sub_goals": [{"name": name} for name in sub_goals]
+                },
+            }
+            call.save(update_fields=["call_metadata"])
+    return calls
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestRunCallsV3NotFilters:
+    @pytest.mark.parametrize(
+        "key,values",
+        [
+            ("sub_goal", ["a"]),
+            ("sub_goal", ["a", "b"]),
+            ("goal", ["Goal 0"]),
+            ("status", ["passed"]),
+            ("status", ["passed", "failed"]),
+        ],
+    )
+    def test_is_not_returns_every_other_call(
+        self, auth_client, execution, sub_goal_calls, key, values
+    ):
+        every = {str(call.id) for call in sub_goal_calls}
+        matching = _ids(auth_client, execution, {key: values})
+        others = _ids(auth_client, execution, {f"{key}_not": values})
+
+        assert matching and others
+        assert matching.isdisjoint(others)
+        assert matching | others == every
+
+    def test_a_call_without_sub_goals_is_not_any_sub_goal(
+        self, auth_client, execution, sub_goal_calls
+    ):
+        others = _ids(auth_client, execution, {"sub_goal_not": ["a", "b"]})
+
+        assert others == {str(sub_goal_calls[3].id), str(sub_goal_calls[4].id)}
+
+    def test_is_not_combines_with_other_filters(
+        self, auth_client, execution, sub_goal_calls
+    ):
+        both = _ids(
+            auth_client, execution, {"sub_goal": ["b"], "status_not": ["passed"]}
+        )
+        expected = _ids(auth_client, execution, {"sub_goal": ["b"]}) - _ids(
+            auth_client, execution, {"status": ["passed"]}
+        )
+
+        assert both == expected
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestRunCallsV3StatusCounts:
+    def test_without_a_status_filter_they_match_the_summary(
+        self, auth_client, execution, calls
+    ):
+        body = _get(
+            auth_client, execution, filters=json.dumps({"goal": ["Goal 0"]})
+        ).json()
+
+        assert body["status_counts"] == body["summary"]["outcomes"]
+
+    @pytest.mark.parametrize(
+        "status_filter",
+        [{"status": ["passed"]}, {"status_not": ["passed"]}],
+    )
+    def test_a_status_filter_does_not_narrow_them(
+        self, auth_client, execution, calls, status_filter
+    ):
+        others = _get(
+            auth_client, execution, filters=json.dumps({"goal": ["Goal 0"]})
+        ).json()
+        body = _get(
+            auth_client,
+            execution,
+            filters=json.dumps({"goal": ["Goal 0"], **status_filter}),
+        ).json()
+
+        assert body["status_counts"] == others["summary"]["outcomes"]
+        assert body["count"] < others["count"]
+
+    def test_a_status_filter_alone_counts_the_whole_run(
+        self, auth_client, execution, calls
+    ):
+        body = _get(
+            auth_client, execution, filters=json.dumps({"status": ["failed"]})
+        ).json()
+
+        assert body["status_counts"] == body["execution"]["summary"]["outcomes"]
+        assert sum(body["status_counts"].values()) == len(calls)
