@@ -2871,19 +2871,10 @@ function PropertyPicker({
                     "&:hover": { bgcolor: "action.hover" },
                   }}
                 >
-                  <Typography
-                    noWrap
-                    title={prop.name}
-                    sx={{
-                      fontSize: 13,
-                      flex: 1,
-                      maxWidth: 250,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {prop.name}
-                  </Typography>
+                  <TruncatedLabel
+                    text={prop.name}
+                    sx={{ fontSize: 13, flex: 1, maxWidth: 250 }}
+                  />
                   {prop.outputType && (
                     <Chip
                       size="small"
@@ -3023,10 +3014,11 @@ const boundExactValueSearchInput = (value, maxUtf8Bytes) =>
 const pickerValueKey = (value, storageType) =>
   getPickerValueIdentity(value, storageType);
 
-// A one-line value label that names itself in full on hover, but only when the
-// line actually cuts it off. The check runs as the pointer arrives, since the
-// width depends on the panel; a label that fits gets no tooltip.
-function TruncatedValueLabel({ text, sx }) {
+// A one-line label (a field name, a value) that names itself in full on hover,
+// but only when the line actually cuts it off. The check runs as the pointer
+// arrives, since the width depends on the panel; a label that fits gets no
+// tooltip, and a long list carries no per-row observers.
+function TruncatedLabel({ text, sx }) {
   const ref = useRef(null);
   const [cutOff, setCutOff] = useState(false);
   const measure = () => {
@@ -3056,7 +3048,7 @@ function TruncatedValueLabel({ text, sx }) {
     </CustomTooltip>
   );
 }
-TruncatedValueLabel.propTypes = {
+TruncatedLabel.propTypes = {
   text: PropTypes.string,
   sx: PropTypes.object,
 };
@@ -3391,21 +3383,16 @@ function ValuePicker({
             const displayLabel =
               (typeof match === "string" ? match : match?.label) ?? String(v);
             return (
-              <Typography
+              <TruncatedLabel
                 key={pickerValueKey(v, selectedValueTypes[0])}
-                noWrap
-                title={displayLabel}
+                text={displayLabel}
                 sx={{
                   fontSize: 12,
                   color: "text.primary",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
                   minWidth: 0,
                   flex: 1,
                 }}
-              >
-                {displayLabel}
-              </Typography>
+              />
             );
           })()
         ) : (
@@ -3430,30 +3417,43 @@ function ValuePicker({
               ? `${chipLabel} (${secondaryLabel})`
               : chipLabel;
             return (
-              <Chip
+              // Chips are capped narrow, so a long value is nearly always
+              // cut; its full name is always one hover away.
+              <CustomTooltip
                 key={pickerValueKey(v, selectedType)}
-                label={chipLabel}
-                title={chipTitle}
+                show
+                arrow
                 size="small"
-                onDelete={(e) => {
-                  e.stopPropagation();
-                  onChange(
-                    selectedValues.filter(
-                      (_, index) => index !== selectedIndex,
-                    ),
-                    selectedValueTypes.filter(
-                      (_, index) => index !== selectedIndex,
-                    ),
-                  );
-                }}
-                deleteIcon={<Iconify icon="mdi:close" width={10} />}
-                sx={{
-                  height: 20,
-                  fontSize: 10,
-                  maxWidth: 70,
-                  "& .MuiChip-label": { px: 0.5 },
-                }}
-              />
+                enterDelay={300}
+                title={
+                  <Box sx={{ wordBreak: "break-all", whiteSpace: "pre-wrap" }}>
+                    {chipTitle}
+                  </Box>
+                }
+              >
+                <Chip
+                  label={chipLabel}
+                  size="small"
+                  onDelete={(e) => {
+                    e.stopPropagation();
+                    onChange(
+                      selectedValues.filter(
+                        (_, index) => index !== selectedIndex,
+                      ),
+                      selectedValueTypes.filter(
+                        (_, index) => index !== selectedIndex,
+                      ),
+                    );
+                  }}
+                  deleteIcon={<Iconify icon="mdi:close" width={10} />}
+                  sx={{
+                    height: 20,
+                    fontSize: 10,
+                    maxWidth: 70,
+                    "& .MuiChip-label": { px: 0.5 },
+                  }}
+                />
+              </CustomTooltip>
             );
           })
         )}
@@ -3654,7 +3654,7 @@ function ValuePicker({
                   }}
                 />
                 <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <TruncatedValueLabel
+                  <TruncatedLabel
                     text={label}
                     sx={{
                       fontSize: 12,
@@ -3663,7 +3663,7 @@ function ValuePicker({
                     }}
                   />
                   {secondaryLabel && (
-                    <TruncatedValueLabel
+                    <TruncatedLabel
                       text={secondaryLabel}
                       sx={{ fontSize: 10, color: "text.secondary", mt: 0.1 }}
                     />
@@ -4313,20 +4313,15 @@ function FilterRow({
             justifyContent: "space-between",
           }}
         >
-          <Typography
-            noWrap
-            sx={{
-              fontSize: 12,
-              maxWidth: "100%",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}
-          >
-            {selectedProp?.name ||
+          <TruncatedLabel
+            text={
+              selectedProp?.name ||
               filter.fieldName ||
               filter.field ||
-              "Property"}
-          </Typography>
+              "Property"
+            }
+            sx={{ fontSize: 12, maxWidth: "100%" }}
+          />
         </Button>
       </CustomTooltip>
       <PropertyPicker

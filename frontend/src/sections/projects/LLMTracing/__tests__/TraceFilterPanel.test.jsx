@@ -1853,7 +1853,7 @@ describe("voice-call property search aliases", () => {
     document.body.removeChild(anchorEl);
   });
 
-  it("exposes the complete property name when a picker row is truncated", () => {
+  it("exposes the complete property name when a picker row is truncated", async () => {
     const longPropertyName =
       "cost_breakdown.analysisCostBreakdown.structuredOutputPromptTokens";
     const { anchorEl } = renderPanel({
@@ -1870,9 +1870,18 @@ describe("voice-call property search aliases", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Property" }));
 
-    expect(screen.getByText(longPropertyName)).toHaveAttribute(
-      "title",
-      longPropertyName,
+    // jsdom has no layout; give the row the box of a clipped line. The full
+    // name opens in a hover tooltip (the picker is itself a role="tooltip"
+    // popper, so read MUI's tooltip element).
+    const label = screen.getByText(longPropertyName);
+    Object.defineProperty(label, "scrollWidth", { value: 420 });
+    Object.defineProperty(label, "clientWidth", { value: 220 });
+    fireEvent.mouseOver(label);
+    fireEvent.mouseEnter(label);
+    await waitFor(() =>
+      expect(document.querySelector(".MuiTooltip-tooltip")).toHaveTextContent(
+        longPropertyName,
+      ),
     );
     document.body.removeChild(anchorEl);
   });
@@ -3938,6 +3947,8 @@ describe("voice-call property search aliases", () => {
     document.body.removeChild(anchorEl);
   });
 
+  const hoverTooltip = () => document.querySelector(".MuiTooltip-tooltip");
+
   it("shows a cut-off value's full name on hover, and no tooltip for one that fits", async () => {
     const long = "dfd8e932-aadf-4f7b-8f4d-5f97c7dabfd8-deep-research-agent";
     dashboardFilterValuesMock.mockReturnValue({
@@ -3974,10 +3985,10 @@ describe("voice-call property search aliases", () => {
     Object.defineProperty(longLabel, "clientWidth", { value: 220 });
     fireEvent.mouseOver(longLabel);
     fireEvent.mouseEnter(longLabel);
-    expect(await screen.findByRole("tooltip")).toHaveTextContent(long);
+    await waitFor(() => expect(hoverTooltip()).toHaveTextContent(long));
     fireEvent.mouseLeave(longLabel);
     fireEvent.mouseOut(longLabel);
-    await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+    await waitFor(() => expect(hoverTooltip()).toBeNull());
 
     const shortLabel = within(
       document.querySelector('[data-filter-value-option="ended"]'),
@@ -3985,7 +3996,39 @@ describe("voice-call property search aliases", () => {
     fireEvent.mouseOver(shortLabel);
     fireEvent.mouseEnter(shortLabel);
     await new Promise((r) => setTimeout(r, 400));
-    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(hoverTooltip()).toBeNull();
+
+    document.body.removeChild(anchorEl);
+  });
+
+  it("names each selected value chip in full on hover", async () => {
+    const long = "dfd8e932-aadf-4f7b-8f4d-5f97c7dabfd8-deep-research-agent";
+    dashboardFilterValuesMock.mockReturnValue({
+      ...defaultDashboardFilterValues(),
+      data: [
+        { value: long, label: long },
+        { value: "ended", label: "ended" },
+      ],
+    });
+    const { anchorEl } = renderPanel({
+      properties,
+      currentFilters: [
+        {
+          field: "agent_name",
+          fieldName: "agent_name",
+          fieldCategory: "attribute",
+          fieldType: "string",
+          apiColType: "SPAN_ATTRIBUTE",
+          operator: "in",
+          value: [long, "ended"],
+        },
+      ],
+      projectId: "project-1",
+    });
+    const chip = screen.getByText(long).closest(".MuiChip-root");
+    expect(chip).not.toHaveAttribute("title");
+    fireEvent.mouseOver(chip);
+    await waitFor(() => expect(hoverTooltip()).toHaveTextContent(long));
 
     document.body.removeChild(anchorEl);
   });
