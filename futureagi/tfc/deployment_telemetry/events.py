@@ -26,6 +26,7 @@ from tfc.deployment_telemetry.config import (
 )
 from tfc.deployment_telemetry.event_buffer import (
     delete_event,
+    event_flush_lock,
     load_event,
     pending_events,
     prune_events,
@@ -67,7 +68,15 @@ EVENT_SOURCES = frozenset(
     {"web", "api", "cli", "mcp", "sdk", "agent", "system", "unknown"}
 )
 EVENT_PROPERTY_KEYS = frozenset(
-    {"method", "route", "status_code", "auth_method", "feature", "deployment_type", "version"}
+    {
+        "method",
+        "route",
+        "status_code",
+        "auth_method",
+        "feature",
+        "deployment_type",
+        "version",
+    }
 )
 _flush_lock = threading.Lock()
 _flush_thread_lock = threading.Lock()
@@ -76,7 +85,9 @@ _instance_id_cache_lock = threading.Lock()
 _instance_id_cache: tuple[str, UUID] | None = None
 
 
-def pseudonymous_id(value: Any, prefix: str, instance_id: UUID | str | None = None) -> str:
+def pseudonymous_id(
+    value: Any, prefix: str, instance_id: UUID | str | None = None
+) -> str:
     """Return a stable, install-local actor identifier without secrets/PII."""
     scope = str(instance_id) if instance_id is not None else "unregistered"
     digest = hashlib.sha256(f"{scope}:{value}".encode()).hexdigest()[:24]
@@ -122,11 +133,16 @@ def build_event(
         "event_id": str(uuid4()),
         "instance_id": str(instance_id),
         "event_name": event_name,
-        "occurred_at": (occurred_at or datetime.now(UTC)).astimezone(UTC).isoformat().replace("+00:00", "Z"),
+        "occurred_at": (occurred_at or datetime.now(UTC))
+        .astimezone(UTC)
+        .isoformat()
+        .replace("+00:00", "Z"),
         "actor_type": actor_type,
         "actor_id": actor_id,
         "source": source,
-        "organization_id": str(organization_id) if organization_id is not None else None,
+        "organization_id": str(organization_id)
+        if organization_id is not None
+        else None,
         "workspace_id": str(workspace_id) if workspace_id is not None else None,
         "operation_id": operation_id,
         "version": get_version(),
@@ -150,33 +166,48 @@ def _flush_events() -> int:
     if telemetry_is_disabled() or not is_self_hosted_deployment():
         return 0
     with _flush_lock:
-        state = DeploymentTelemetryState.objects.values("instance_id", "instance_secret").first()
-        if not state or not state["instance_secret"]:
-            return 0
-        events = []
-        paths = []
-        for path in pending_events(EVENT_BATCH_SIZE):
-            event = load_event(path)
-            if event is None:
+        with event_flush_lock() as acquired:
+            if not acquired:
+                return 0
+            state = DeploymentTelemetryState.objects.values(
+                "instance_id", "instance_secret"
+            ).first()
+            if not state or not state["instance_secret"]:
+                return 0
+            instance_id = str(state["instance_id"])
+            prune_events(instance_id=instance_id)
+            events = []
+            paths = []
+            for path in pending_events(EVENT_BATCH_SIZE, instance_id=instance_id):
+                event = load_event(path)
+                if event is None:
+                    delete_event(path)
+                    continue
+                if str(event.get("instance_id")) != instance_id:
+                    logger.warning(
+                        "deployment_telemetry_event_instance_mismatch",
+                        path=str(path),
+                        instance_id=str(event.get("instance_id")),
+                    )
+                    delete_event(path)
+                    continue
+                events.append(event)
+                paths.append(path)
+            if not events:
+                return 0
+            payload = {
+                "schema_version": EVENT_SCHEMA_VERSION,
+                "instance_id": instance_id,
+                "events": events,
+            }
+            response = TelemetryClient(secret=state["instance_secret"]).post(
+                EVENT_ENDPOINT, payload
+            )
+            if not response.ok:
+                return 0
+            for path in paths:
                 delete_event(path)
-                continue
-            events.append(event)
-            paths.append(path)
-        if not events:
-            return 0
-        payload = {
-            "schema_version": EVENT_SCHEMA_VERSION,
-            "instance_id": str(state["instance_id"]),
-            "events": events,
-        }
-        response = TelemetryClient(secret=state["instance_secret"]).post(
-            EVENT_ENDPOINT, payload
-        )
-        if not response.ok:
-            return 0
-        for path in paths:
-            delete_event(path)
-        return len(paths)
+            return len(paths)
 
 
 def flush_events() -> int:
@@ -185,7 +216,6 @@ def flush_events() -> int:
         return 0
     close_old_connections()
     try:
-        prune_events()
         return _flush_events()
     except Exception:
         logger.warning("deployment_telemetry_event_flush_failed", exc_info=True)
@@ -273,7 +303,9 @@ def record_request_event(request, response, duration_ms: float) -> bool:
     if telemetry_is_disabled() or not is_self_hosted_deployment():
         return False
     path = getattr(request, "path", "") or ""
-    if path.startswith(("/telemetry/", "/health", "/ready", "/static/", "/admin/", "/favicon.ico")):
+    if path.startswith(
+        ("/telemetry/", "/health", "/ready", "/static/", "/admin/", "/favicon.ico")
+    ):
         return False
 
     api_key = getattr(request, "org_api_key", None)

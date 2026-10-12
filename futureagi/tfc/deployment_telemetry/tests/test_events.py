@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from tfc.deployment_telemetry.config import get_telemetry_buffer_dir
 from tfc.deployment_telemetry.event_buffer import (
     load_event,
     pending_events,
@@ -73,6 +74,54 @@ def test_event_outbox_is_durable_and_deduplicated():
     assert load_event(first) == event
 
 
+def test_event_outbox_isolated_by_instance_id():
+    first_instance = uuid4()
+    second_instance = uuid4()
+    first = store_event(
+        build_event(
+            "user_logged_in",
+            instance_id=first_instance,
+            actor_type="human_user",
+            actor_id="user-1",
+            source="web",
+        )
+    )
+    second = store_event(
+        build_event(
+            "user_logged_in",
+            instance_id=second_instance,
+            actor_type="human_user",
+            actor_id="user-2",
+            source="web",
+        )
+    )
+
+    assert first != second
+    assert pending_events(instance_id=first_instance) == [first]
+    assert pending_events(instance_id=second_instance) == [second]
+
+
+def test_legacy_event_for_same_instance_is_migrated():
+    instance_id = uuid4()
+    event = build_event(
+        "user_logged_in",
+        instance_id=instance_id,
+        actor_type="human_user",
+        actor_id="user-1",
+        source="web",
+    )
+    event_dir = get_telemetry_buffer_dir() / "events"
+    event_dir.mkdir(parents=True)
+    legacy = event_dir / f"event-{event['event_id']}.json"
+    legacy.write_text(json.dumps(event), encoding="utf-8")
+
+    scoped = store_event(event)
+
+    assert scoped.exists()
+    assert not legacy.exists()
+    assert pending_events(instance_id=instance_id) == [scoped]
+
+
 def test_event_outbox_supports_concurrent_writers():
     instance_id = uuid4()
 
@@ -94,6 +143,7 @@ def test_event_outbox_supports_concurrent_writers():
     assert len(pending_events()) == 8
 
 
+@pytest.mark.django_db
 def test_event_flush_end_to_end_signs_and_deletes_outbox(monkeypatch):
     instance_id = uuid4()
     secret = "test-secret"
@@ -138,6 +188,54 @@ def test_event_flush_end_to_end_signs_and_deletes_outbox(monkeypatch):
 
     assert pending_events() == []
     assert captured["url"].endswith("/telemetry/events/")
+
+
+@pytest.mark.django_db
+def test_shared_local_outbox_flushes_only_the_current_instance(monkeypatch):
+    """Two bare-metal installs may share the historical default temp path.
+
+    A flush must sign and delete only the current install's events; the other
+    install's durable outbox remains available for its own sender.
+    """
+    instance_a = uuid4()
+    instance_b = uuid4()
+    event_a = build_event(
+        "user_logged_in",
+        instance_id=instance_a,
+        actor_type="human_user",
+        actor_id="user-a",
+        source="web",
+    )
+    event_b = build_event(
+        "user_logged_in",
+        instance_id=instance_b,
+        actor_type="human_user",
+        actor_id="user-b",
+        source="web",
+    )
+    store_event(event_a)
+    store_event(event_b)
+
+    state = {"instance_id": instance_a, "instance_secret": "secret-a"}
+    monkeypatch.setattr(
+        "tfc.deployment_telemetry.events.DeploymentTelemetryState.objects.values",
+        lambda *args: SimpleNamespace(first=lambda: state),
+    )
+    captured = []
+
+    def fake_post(url, data, headers, timeout):
+        captured.append(json.loads(data))
+        return SimpleNamespace(status_code=202, json=lambda: {"status": "ok"})
+
+    with patch("tfc.deployment_telemetry.transport.requests.post", fake_post):
+        assert flush_events() == 1
+
+    assert [payload["instance_id"] for payload in captured] == [str(instance_a)]
+    assert [event["instance_id"] for event in captured[0]["events"]] == [
+        str(instance_a)
+    ]
+    assert pending_events(instance_id=instance_a) == []
+    assert len(pending_events(instance_id=instance_b)) == 1
 
 
 def test_opt_out_drops_events_without_network(monkeypatch):
@@ -191,7 +289,9 @@ def test_request_event_attributes_api_key_actor_without_request_body():
         resolver_match=SimpleNamespace(route="api/agent/run"),
     )
     response = SimpleNamespace(status_code=201)
-    with patch("tfc.deployment_telemetry.events.record_event", return_value=True) as record:
+    with patch(
+        "tfc.deployment_telemetry.events.record_event", return_value=True
+    ) as record:
         assert record_request_event(request, response, 12.5)
 
     kwargs = record.call_args.kwargs
