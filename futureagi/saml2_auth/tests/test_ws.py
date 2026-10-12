@@ -1,16 +1,45 @@
 from __future__ import annotations
 
+from datetime import timedelta
+from types import SimpleNamespace
+
 import pytest
 from asgiref.sync import sync_to_async
+from django.utils import timezone
 
 from saml2_auth.tests.ws_helpers import (
     graph_socket,
     no_outbound_frame,
     receive_close_code,
 )
+from sockets.saml_guard import SamlSocketGuard
 from tracer.models.project import Project
 
 pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.integration]
+
+
+@pytest.mark.asyncio
+async def test_saml_socket_activity_refreshes_token_liveness(
+    idp_a, make_saml_token, saml_tenants
+):
+    row, _token = await sync_to_async(make_saml_token)(
+        saml_tenants.a1, saml_tenants.org_a, idp_a
+    )
+    old_last_used = timezone.now() - timedelta(days=2, minutes=-1)
+    row.last_used_at = old_last_used
+    await sync_to_async(row.save)(update_fields=["last_used_at"])
+    consumer = SimpleNamespace(
+        scope={
+            "auth_scope": SimpleNamespace(org_id=saml_tenants.org_a.id),
+            "auth_token_id": row.id,
+            "user": saml_tenants.a1,
+        }
+    )
+
+    await SamlSocketGuard(consumer)._validate()
+
+    await sync_to_async(row.refresh_from_db)()
+    assert row.last_used_at > old_last_used
 
 
 @pytest.mark.asyncio

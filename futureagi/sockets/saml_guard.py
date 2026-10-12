@@ -66,12 +66,14 @@ class SamlSocketGuard:
             )
             .first()
         )
+        now = timezone.now()
         validate_saml_credential(
             token_row,
             str(self.consumer.scope["user"].id),
-            now=timezone.now(),
+            now=now,
             transport="websocket",
         )
+        AuthToken.objects.filter(id=token_id, is_active=True).update(last_used_at=now)
 
     async def _revoke(self, reason: str) -> None:
         if self.revoked:
