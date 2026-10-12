@@ -16,6 +16,8 @@ const RESULTS = path.join(
   'test-results',
   'saml-requests.json',
 );
+// Browser waits: the IdP round trip plus the SPA's first render.
+const UI_READY = 30_000;
 const SAML_PATHS = new Set(['/saml2_auth/acs/', '/saml2_auth/complete/', '/accounts/user-info/']);
 const receipts: RequestReceipt[] = [];
 const pendingReceipts: Promise<void>[] = [];
@@ -130,7 +132,7 @@ async function completeBrowserLogin(
   expect(new URL(idpUrl).hostname).toBe('127.0.0.1');
   const callback = page.waitForURL(
     url => url.origin === E2E.appUrl && url.pathname.startsWith('/dashboard/'),
-    { timeout: 30_000 },
+    { timeout: UI_READY },
   );
   await page.goto(idpUrl, { waitUntil: 'domcontentloaded' });
   await callback;
@@ -176,6 +178,14 @@ test.describe('SAML tenant isolation', () => {
       expect(rows).toEqual([{
         auth_origin: 'saml', scoped_organization_id: actor.organizationId, state: 'consumed',
       }]);
+      const flowReceipts = (await settledReceipts()).filter(receipt => receipt.flow === 'SAML-E2E-001');
+      expect(flowReceipts.map(receipt => receipt.path)).toEqual(
+        expect.arrayContaining(['/saml2_auth/acs/', '/saml2_auth/complete/', '/accounts/user-info/']),
+      );
+      for (const receipt of flowReceipts) {
+        expect(receipt.cookieNames.filter(name => name.includes('='))).toEqual([]);
+      }
+      expect(JSON.stringify(flowReceipts)).not.toContain(token);
     } finally {
       await dispose(idp, probe);
     }
@@ -206,6 +216,7 @@ test.describe('SAML tenant isolation', () => {
       const idpUrl = await initiate(pageX, actor.email);
       const acsResponse = pageY.waitForResponse(response =>
         new URL(response.url()).pathname === '/saml2_auth/acs/' && response.request().method() === 'POST',
+        { timeout: UI_READY },
       );
       await pageY.goto(idpUrl, { waitUntil: 'domcontentloaded' });
       const candidate = new URL((await acsResponse).headers().location, E2E.apiUrl).searchParams.get('c');
@@ -216,7 +227,7 @@ test.describe('SAML tenant isolation', () => {
       )).toEqual([]);
 
       await pageX.goto(`${E2E.apiUrl}/saml2_auth/complete/?c=${candidate}`, { waitUntil: 'domcontentloaded' });
-      await expect(pageX).toHaveURL(/\/dashboard\//, { timeout: 30_000 });
+      await expect(pageX).toHaveURL(/\/dashboard\//, { timeout: UI_READY });
       expect(await probe.pg<{ id: string }>(
         `SELECT t.id FROM accounts_auth_token t JOIN accounts_user u ON u.id = t.user_id
          WHERE u.email = $1 AND t.auth_origin = 'saml'`, [actor.email],
@@ -261,11 +272,19 @@ test.describe('SAML tenant isolation', () => {
     const { actor, idp, probe } = await setupSamlActor(request, 'saml-next');
     try {
       await completeBrowserLogin(page, idp, actor.email, '/dashboard/develop/runs');
-      await expect(page).toHaveURL(/\/dashboard\/develop\/runs$/);
-      await completeBrowserLogin(page, idp, actor.email, '//evil.example');
-      expect(new URL(page.url()).origin).toBe(E2E.appUrl);
-      await completeBrowserLogin(page, idp, actor.email, 'https://evil.example');
-      expect(new URL(page.url()).origin).toBe(E2E.appUrl);
+      await expect(page).toHaveURL(/\/dashboard\/develop\/runs$/, { timeout: UI_READY });
+      for (const unsafe of ['//evil.example', 'https://evil.example']) {
+        // The app passes through the default route before applying any next,
+        // so the URL alone cannot tell; the completion redirect carries the decision.
+        const completion = page.waitForResponse(
+          response => new URL(response.url()).pathname === '/saml2_auth/complete/',
+          { timeout: UI_READY },
+        );
+        await completeBrowserLogin(page, idp, actor.email, unsafe);
+        const landing = new URL((await completion).headers().location);
+        expect(landing.searchParams.get('next')).toBe('/dashboard/develop');
+        await expect(page).toHaveURL(`${E2E.appUrl}/dashboard/develop`, { timeout: UI_READY });
+      }
     } finally {
       await dispose(idp, probe);
     }
@@ -293,7 +312,7 @@ test.describe('SAML tenant isolation', () => {
         return { status: response.status, body: await response.json() };
       }, { apiUrl: E2E.apiUrl, accessToken: token });
       expect(current.status).toBe(200);
-      expect(JSON.stringify(current.body)).toContain(actor.organizationId);
+      expect(current.body.result.organization.id).toBe(actor.organizationId);
       expect(await probe.pg<{ config: unknown }>(
         'SELECT config FROM accounts_user WHERE email = $1', [actor.email],
       )).toEqual(before);
@@ -328,7 +347,7 @@ test.describe('SAML tenant isolation', () => {
       const idpUrl = await initiate(page, samlActor.email);
       const callback = page.waitForURL(
         url => url.origin === E2E.appUrl && url.pathname.startsWith('/dashboard/'),
-        { timeout: 30_000 },
+        { timeout: UI_READY },
       );
       await page.goto(idpUrl, { waitUntil: 'domcontentloaded' });
       await callback;
