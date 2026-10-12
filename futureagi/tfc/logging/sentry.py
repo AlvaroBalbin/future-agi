@@ -280,8 +280,10 @@ def _get_before_send() -> Callable:
 
         # 1. Infrastructure logger noise - never actionable as an issue.
         logger_name = event.get("logger") or ""
+        # Match on a dot boundary: "saml2" must not swallow "saml2_auth".
         if isinstance(logger_name, str) and any(
-            logger_name.startswith(p) for p in NOISY_LOGGER_PREFIXES
+            logger_name == p or logger_name.startswith(f"{p}.")
+            for p in NOISY_LOGGER_PREFIXES
         ):
             return None
 
