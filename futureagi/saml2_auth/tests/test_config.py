@@ -118,3 +118,23 @@ def test_upload_reports_the_invalid_field(saml_tenants, idp_metadata):
 
     assert response.status_code == 400
     assert "name:" in response.content.decode()
+
+
+def test_deleted_idp_cannot_be_reactivated_without_fresh_metadata(saml_tenants, idp_a):
+    client = _as_org_owner(saml_tenants.a1)
+    assert client.delete(f"/saml2_auth/idp-uploads/{idp_a.id}/").status_code == 200
+
+    response = client.post(
+        "/saml2_auth/idp-uploads/",
+        {
+            "name": "reactivate-without-metadata",
+            "identity_type": str(idp_a.identity_type),
+            "is_enabled": "true",
+        },
+        format="multipart",
+    )
+
+    assert response.status_code == 400
+    idp_a.refresh_from_db(from_queryset=SAMLMetadataModel.all_objects)
+    assert idp_a.deleted is True
+    assert idp_a.is_enabled is True

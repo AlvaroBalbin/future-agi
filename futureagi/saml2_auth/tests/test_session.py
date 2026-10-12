@@ -9,6 +9,7 @@ from rest_framework.test import APIClient
 
 from accounts.authentication import generate_encrypted_message
 from accounts.models.auth_token import AuthToken, AuthTokenType
+from accounts.models.webauthn_credential import WebAuthnCredential
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
@@ -30,6 +31,28 @@ def test_saml_token_explicit_b_selector_denied(idp_a, make_saml_token, saml_tena
 
     assert response.status_code == 403
     assert "saml_scope_conflict" in response.content.decode()
+
+
+def test_saml_session_cannot_rename_passkey(idp_a, make_saml_token, saml_tenants):
+    _row, token = make_saml_token(saml_tenants.a1, saml_tenants.org_a, idp_a)
+    passkey = WebAuthnCredential.objects.create(
+        user=saml_tenants.a1,
+        name="Original",
+        credential_id="credential-id",
+        public_key="public-key",
+        sign_count=0,
+    )
+
+    response = _bearer_client(token).patch(
+        f"/accounts/passkeys/{passkey.id}/",
+        {"name": "Renamed"},
+        format="json",
+    )
+
+    assert response.status_code == 403
+    assert "saml_scoped_session" in response.content.decode()
+    passkey.refresh_from_db()
+    assert passkey.name == "Original"
 
 
 def test_revocation_after_issuance(idp_a, make_saml_token, saml_tenants):

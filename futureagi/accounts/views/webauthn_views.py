@@ -140,7 +140,7 @@ class PasskeyDetailView(APIView):
 
     def get_permissions(self):
         permission_classes = [IsAuthenticated]
-        if self.request.method == "DELETE":
+        if self.request.method in {"PATCH", "DELETE"}:
             permission_classes.append(RequiresIndependentAuth)
         return [permission() for permission in permission_classes]
 

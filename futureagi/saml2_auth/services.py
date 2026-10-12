@@ -64,7 +64,7 @@ def resolve_login_idp(user: User) -> SAMLMetadataModel | None:
             deleted=False,
             is_enabled=True,
             organization_id__in=membership_org_ids,
-        )[:2]
+        )
     )
     if user.organization_id in membership_org_ids:
         preferred = next(
@@ -298,12 +298,10 @@ def store_candidate(*, attempt: Any, payload: bytes) -> Any:
         ):
             raise SamlDenied("attempt_unavailable")
         _delete_limited(SamlResponseCandidate, "expires_at__lt", now)
-        candidate_rows = SamlResponseCandidate.objects.count()
+        live_candidates = SamlResponseCandidate.objects.filter(expires_at__gt=now)
+        candidate_rows = live_candidates.count()
         candidate_bytes = (
-            SamlResponseCandidate.objects.aggregate(total=models.Sum("payload_bytes"))[
-                "total"
-            ]
-            or 0
+            live_candidates.aggregate(total=models.Sum("payload_bytes"))["total"] or 0
         )
         if (
             candidate_rows >= settings.SAML_MAX_CANDIDATE_ROWS

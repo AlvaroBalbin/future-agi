@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models.auth_token import AuthToken
-from saml2_auth.models import SamlLoginAttempt
-from saml2_auth.services import claim_attempt
+from accounts.models.organization import Organization
+from accounts.models.organization_membership import OrganizationMembership
+from saml2_auth.models import (
+    SamlLoginAttempt,
+    SAMLMetadataModel,
+    SamlResponseCandidate,
+)
+from saml2_auth.services import claim_attempt, resolve_login_idp, store_candidate
 from saml2_auth.tests.conftest import bound_attempt, complete, post_acs
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
@@ -120,6 +129,55 @@ def test_losing_duplicate_completion_leaves_the_claimed_attempt_alone(
 
     assert "sso_token" not in denied["Location"]
     assert SamlLoginAttempt.objects.get(relay_key=attempt.relay).state == "claimed"
+
+
+def test_preferred_idp_is_found_after_two_other_enabled_idps(
+    saml_tenants, idp_a, idp_b, idp_metadata
+):
+    preferred_org = Organization.objects.create(name="SAML Tenant Preferred")
+    OrganizationMembership.no_workspace_objects.create(
+        user=saml_tenants.a2,
+        organization=preferred_org,
+        role="Member",
+        level=3,
+        is_active=True,
+    )
+    saml_tenants.a2.organization = preferred_org
+    saml_tenants.a2.save(update_fields=["organization"])
+    preferred_idp = SAMLMetadataModel.no_workspace_objects.create(
+        organization=preferred_org,
+        identity_type=SAMLMetadataModel.IDENTITY_GOOGLE,
+        relay_state="preferred-relay",
+        is_enabled=True,
+        meta=idp_metadata["google"],
+    )
+
+    assert resolve_login_idp(saml_tenants.a2).id == str(preferred_idp.id)
+
+
+def test_expired_candidates_do_not_consume_capacity(
+    api_client, idp_a, saml_tenants, settings
+):
+    settings.SAML_MAX_CANDIDATE_ROWS = 1
+    attempt = bound_attempt(api_client, email=saml_tenants.a2.email)
+    attempt_row = SamlLoginAttempt.objects.get(relay_key=attempt.relay)
+    expired_at = timezone.now() - timedelta(seconds=1)
+    SamlResponseCandidate.objects.bulk_create(
+        [
+            SamlResponseCandidate(
+                candidate_key=f"expired-{index}",
+                attempt=attempt_row,
+                payload=b"expired",
+                payload_bytes=7,
+                expires_at=expired_at,
+            )
+            for index in range(101)
+        ]
+    )
+
+    candidate = store_candidate(attempt=attempt_row, payload=b"live")
+
+    assert candidate.payload == b"live"
 
 
 def test_a_flood_of_attempts_cannot_lock_a_user_out(
