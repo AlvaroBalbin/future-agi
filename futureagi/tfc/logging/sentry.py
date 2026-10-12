@@ -105,8 +105,11 @@ SENSITIVE_KEY_SUBSTRINGS = (
     "access_key",
     "private_key",
     "csrf",
+    # Form fields (SAMLResponse, RelayState) and the ACS view's locals for them.
     "samlresponse",
+    "saml_response",
     "relaystate",
+    "relay_state",
     "fai_saml_b",
     "candidate",
 )

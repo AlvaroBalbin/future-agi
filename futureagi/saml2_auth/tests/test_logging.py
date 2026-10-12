@@ -37,6 +37,7 @@ def test_acs_store_failure_scrubs_assertion_from_sentry_locals(monkeypatch):
     stack frame. The scrubber must redact them before the event leaves.
     """
 
+    import base64
     import json
 
     from tfc.logging.sentry import _scrub_event
@@ -53,9 +54,13 @@ def test_acs_store_failure_scrubs_assertion_from_sentry_locals(monkeypatch):
                             {
                                 "filename": "saml2_auth/views.py",
                                 "function": "post",
+                                # As the view holds them: the posted field is
+                                # still base64, so it carries no XML marker.
                                 "vars": {
-                                    "saml_response": marker,
-                                    "payload": marker.encode().hex(),
+                                    "saml_response": base64.b64encode(
+                                        marker.encode()
+                                    ).decode(),
+                                    "payload": repr(marker.encode()),
                                     "relay_state": "server-issued-relay",
                                 },
                             }
@@ -69,6 +74,8 @@ def test_acs_store_failure_scrubs_assertion_from_sentry_locals(monkeypatch):
     rendered = json.dumps(event)
     assert "private-marker@example.test" not in rendered
     assert "<saml:Assertion>" not in rendered
+    assert base64.b64encode(marker.encode()).decode() not in rendered
+    assert "server-issued-relay" not in rendered
 
 
 def test_acs_body_is_not_copied_onto_the_tracing_span():
