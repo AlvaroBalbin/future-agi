@@ -27,7 +27,9 @@ interface RequestReceipt {
   method: string;
   path: string;
   cookieNames: string[];
+  cookieHeader: string | null;
   authorizationPrefix: string | null;
+  authorizationValue: string | null;
   hasOrganizationHeader: boolean;
   hasWorkspaceHeader: boolean;
 }
@@ -56,7 +58,9 @@ function recordRequests(page: Page, flow: string): void {
         method: request.method(),
         path: url.pathname,
         cookieNames,
+        cookieHeader: headers.cookie ?? null,
         authorizationPrefix: authorization ? authorization.split(' ', 1)[0] : null,
+        authorizationValue: authorization?.split(' ', 2)[1] ?? null,
         hasOrganizationHeader: 'x-organization-id' in headers,
         hasWorkspaceHeader: 'x-workspace-id' in headers,
       });
@@ -67,6 +71,14 @@ function recordRequests(page: Page, flow: string): void {
 async function settledReceipts(): Promise<RequestReceipt[]> {
   await Promise.allSettled(pendingReceipts);
   return receipts;
+}
+
+function redactReceipts(receiptsToRedact: RequestReceipt[]): object[] {
+  return receiptsToRedact.map(({ cookieHeader, authorizationValue, ...receipt }) => ({
+    ...receipt,
+    cookieHeader: cookieHeader ? '[REDACTED]' : null,
+    authorizationValue: authorizationValue ? '[REDACTED]' : null,
+  }));
 }
 
 async function uploadIdp(
@@ -148,7 +160,7 @@ test.describe('SAML tenant isolation', () => {
 
   test.afterAll(async () => {
     await mkdir(path.dirname(RESULTS), { recursive: true });
-    await writeFile(RESULTS, `${JSON.stringify(await settledReceipts(), null, 2)}\n`);
+    await writeFile(RESULTS, `${JSON.stringify(redactReceipts(await settledReceipts()), null, 2)}\n`);
   });
 
   test('SAML-E2E-001: signed login issues one organization-scoped session', {
@@ -182,10 +194,16 @@ test.describe('SAML tenant isolation', () => {
       expect(flowReceipts.map(receipt => receipt.path)).toEqual(
         expect.arrayContaining(['/saml2_auth/acs/', '/saml2_auth/complete/', '/accounts/user-info/']),
       );
-      for (const receipt of flowReceipts) {
-        expect(receipt.cookieNames.filter(name => name.includes('='))).toEqual([]);
+      const secretValues = flowReceipts.flatMap(receipt =>
+        [receipt.cookieHeader, receipt.authorizationValue].filter(
+          (value): value is string => Boolean(value),
+        )
+      );
+      const redacted = JSON.stringify(redactReceipts(flowReceipts));
+      for (const secret of secretValues) {
+        expect(redacted).not.toContain(secret);
       }
-      expect(JSON.stringify(flowReceipts)).not.toContain(token);
+      expect(redacted).not.toContain(token);
     } finally {
       await dispose(idp, probe);
     }
@@ -221,6 +239,11 @@ test.describe('SAML tenant isolation', () => {
       await pageY.goto(idpUrl, { waitUntil: 'domcontentloaded' });
       const candidate = new URL((await acsResponse).headers().location, E2E.apiUrl).searchParams.get('c');
       expect(candidate).toBeTruthy();
+      const [attempt] = await probe.pg<{ id: string }>(
+        'SELECT attempt_id AS id FROM saml_response_candidate WHERE candidate_key = $1',
+        [candidate],
+      );
+      expect(attempt?.id).toBeTruthy();
       expect(await probe.pg<{ id: string }>(
         `SELECT t.id FROM accounts_auth_token t JOIN accounts_user u ON u.id = t.user_id
          WHERE u.email = $1 AND t.auth_origin = 'saml'`, [actor.email],
@@ -228,6 +251,9 @@ test.describe('SAML tenant isolation', () => {
 
       await pageX.goto(`${E2E.apiUrl}/saml2_auth/complete/?c=${candidate}`, { waitUntil: 'domcontentloaded' });
       await expect(pageX).toHaveURL(/\/dashboard\//, { timeout: UI_READY });
+      expect(await probe.pg<{ id: string; state: string }>(
+        'SELECT id, state FROM saml_login_attempt WHERE id = $1', [attempt.id],
+      )).toEqual([{ id: attempt.id, state: 'consumed' }]);
       expect(await probe.pg<{ id: string }>(
         `SELECT t.id FROM accounts_auth_token t JOIN accounts_user u ON u.id = t.user_id
          WHERE u.email = $1 AND t.auth_origin = 'saml'`, [actor.email],
@@ -360,6 +386,7 @@ test.describe('SAML tenant isolation', () => {
       );
       expect(firstUserInfo).toMatchObject({
         authorizationPrefix: 'Bearer', hasOrganizationHeader: false, hasWorkspaceHeader: false,
+        authorizationValue: samlToken,
       });
       const storage = await page.evaluate(() => ({
         refresh: localStorage.getItem('refreshToken'),

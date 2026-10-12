@@ -212,7 +212,7 @@
 ### SAML-E2E-001 — signed login issues one organization-scoped session
 
 **Goal:** A member signs in through the tenant IdP and receives one scoped session  
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:154`  
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:166`  
 **Tags:** @saml
 
 **User steps:**
@@ -231,7 +231,7 @@
 ### SAML-E2E-002 — another browser cannot consume the initiating browser candidate
 
 **Goal:** The browser that initiated SSO can complete after another browser posts first  
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:194`  
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:212`  
 **Tags:** @saml
 
 **User steps:**
@@ -249,7 +249,7 @@
 ### SAML-E2E-003 — the cross-site ACS post omits the binder and completion carries it
 
 **Goal:** A real cross-site IdP POST does not leak the browser binding cookie  
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:240`  
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:266`  
 **Tags:** @saml
 
 **User steps:**
@@ -266,7 +266,7 @@
 ### SAML-E2E-004 — safe next survives the binding while external next values do not
 
 **Goal:** A SAML user returns to the approved deep page and cannot be redirected off-site  
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:263`  
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:289`  
 **Tags:** @saml
 
 **User steps:**
@@ -283,7 +283,7 @@
 ### SAML-E2E-005 — a SAML landing resolves the authenticated organization without configuration writes
 
 **Goal:** A SAML session lands in the organization that signed the assertion  
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:293`  
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:319`  
 **Tags:** @saml
 
 **User steps:**
@@ -300,7 +300,7 @@
 ### SAML-E2E-006 — SAML replaces a live password session before any stale scope is sent
 
 **Goal:** A SAML callback replaces a live session without using its stale organization scope  
-**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:324`  
+**Spec:** `flows/auth/saml-tenant-isolation.spec.ts:350`  
 **Tags:** @saml
 
 **User steps:**
