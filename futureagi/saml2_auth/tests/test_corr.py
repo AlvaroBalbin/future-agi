@@ -120,3 +120,23 @@ def test_losing_duplicate_completion_leaves_the_claimed_attempt_alone(
 
     assert "sso_token" not in denied["Location"]
     assert SamlLoginAttempt.objects.get(relay_key=attempt.relay).state == "claimed"
+
+
+def test_a_flood_of_attempts_cannot_lock_a_user_out(
+    api_client, idp_a, saml_tenants, settings
+):
+    """Initiation needs only an email, so a full per-user window must not refuse."""
+
+    settings.SAML_MAX_ATTEMPTS_PER_USER_PER_TTL = 3
+    flood = [
+        bound_attempt(APIClient(), email=saml_tenants.a2.email).relay for _ in range(3)
+    ]
+
+    own = bound_attempt(api_client, email=saml_tenants.a2.email)
+
+    relays = set(
+        SamlLoginAttempt.objects.filter(user_hint=saml_tenants.a2).values_list(
+            "relay_key", flat=True
+        )
+    )
+    assert relays == {*flood[1:], own.relay}

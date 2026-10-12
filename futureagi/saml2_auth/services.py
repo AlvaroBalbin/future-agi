@@ -245,15 +245,18 @@ def admit_attempt(
         _delete_limited(SamlLoginAttempt, "expires_at__lt", retention_cutoff)
         if SamlLoginAttempt.objects.count() >= settings.SAML_MAX_ATTEMPT_ROWS:
             raise SamlDenied("capacity")
-        if (
+        # Initiation needs only an email, so refusing at the cap would let
+        # anyone lock a user out of SSO. Drop the user's oldest attempts
+        # instead; the user's row count stays bounded either way.
+        window = SamlLoginAttempt.objects.filter(
+            user_hint=user,
+            created_at__gt=now - timedelta(seconds=settings.SAML_ATTEMPT_TTL_SECONDS),
+        ).order_by("created_at")
+        excess = window.count() - settings.SAML_MAX_ATTEMPTS_PER_USER_PER_TTL + 1
+        if excess > 0:
             SamlLoginAttempt.objects.filter(
-                user_hint=user,
-                created_at__gt=now
-                - timedelta(seconds=settings.SAML_ATTEMPT_TTL_SECONDS),
-            ).count()
-            >= settings.SAML_MAX_ATTEMPTS_PER_USER_PER_TTL
-        ):
-            raise SamlDenied("attempt_rate_denied")
+                id__in=list(window.values_list("id", flat=True)[:excess])
+            ).delete()
         return SamlLoginAttempt.objects.create(
             relay_key=secrets.token_urlsafe(32),
             request_id=f"pending-{secrets.token_urlsafe(32)}",

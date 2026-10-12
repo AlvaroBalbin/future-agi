@@ -1119,7 +1119,7 @@ values for these settings at startup. Deploy the backend and frontend together.
     keys = ["SAML_MAX_ATTEMPTS_PER_USER_PER_TTL"]
     default = "`10`"
     setups = ["S", "D", "H"]
-    text = "Maximum login attempts for one user in one attempt-TTL window, across all states."
+    text = "Login attempts kept for one user in one attempt-TTL window, across all states. A new attempt past this drops the oldest, so nobody can lock a user out by starting logins with their email."
 
     [[part.section.row]]
     keys = ["SAML_MAX_PENDING_COOKIES_PER_BROWSER"]
