@@ -37,6 +37,7 @@ export default function StatusFilterChips({ value, counts, onChange, blocked = [
             <Box
               role="button"
               aria-label={chip.label}
+              aria-pressed={active}
               tabIndex={disabled ? -1 : 0}
               onClick={() => !disabled && onChange(chip.id)}
               onKeyDown={(e) => { if (!disabled && (e.key === "Enter" || e.key === " ")) onChange(chip.id); }}

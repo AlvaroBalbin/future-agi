@@ -928,6 +928,35 @@ describe("RunTraceTable", () => {
     );
   });
 
+  it.each([
+    [{ status: ["failed"] }, "Failed"],
+    [{}, "All"],
+    [{ status: ["failed", "error"] }, null],
+    [{ status_not: ["failed"] }, null],
+  ])("lights the chip that alone describes %j", (initialFilters, lit) => {
+    renderTable({ initialFilters });
+
+    const pressed = ["All", "Failed", "Error", "Passed"].filter(
+      (name) =>
+        screen.getByRole("button", { name }).getAttribute("aria-pressed") ===
+        "true",
+    );
+    expect(pressed).toEqual(lit ? [lit] : []);
+  });
+
+  it("counts a chip's status in the Filter badge and shows it in the panel", async () => {
+    const user = userEvent.setup();
+    renderTable();
+
+    await user.click(screen.getByRole("button", { name: "Failed" }));
+    const filterButton = screen.getByRole("button", { name: /Filter/ });
+    expect(filterButton).toHaveTextContent("1");
+
+    await user.click(filterButton);
+    const [fieldPicker] = screen.getAllByRole("combobox");
+    expect(fieldPicker).toHaveTextContent("Status");
+  });
+
   it("exposes later server pages for runs with more than 100 trials", async () => {
     const user = userEvent.setup();
     const finalTrial = {

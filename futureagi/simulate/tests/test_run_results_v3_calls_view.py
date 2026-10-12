@@ -417,7 +417,9 @@ def _ids(client, execution: TestExecution, filters: dict[str, Any]) -> set[str]:
 
 @pytest.fixture
 def sub_goal_calls(calls) -> list[CallExecution]:
-    for call, sub_goals in zip(calls, [["a"], ["a", "b"], ["b"], None, []]):
+    for call, sub_goals in zip(
+        calls, [["a"], ["a", "b"], ["b"], None, []], strict=True
+    ):
         if sub_goals is not None:
             call.call_metadata = {
                 **call.call_metadata,
@@ -461,6 +463,53 @@ class TestRunCallsV3NotFilters:
 
         assert others == {str(sub_goal_calls[3].id), str(sub_goal_calls[4].id)}
 
+    def test_a_call_without_a_goal_is_not_any_goal(self, auth_client, execution, calls):
+        untitled = CallExecution.objects.create(
+            test_execution=execution,
+            scenario=calls[0].scenario,
+            status="completed",
+            started_at=timezone.now(),
+            call_metadata={},
+        )
+
+        others = _ids(auth_client, execution, {"goal_not": ["Goal 0", "Goal 1"]})
+
+        assert others == {str(untitled.id)}
+
+    def test_sub_goals_read_from_the_authored_scenario_are_excluded_too(
+        self, auth_client, execution, calls, organization, workspace
+    ):
+        job = HostedHarnessJob.no_workspace_objects.create(
+            organization=organization,
+            workspace=workspace,
+            run_id=uuid.uuid4(),
+            idempotency_key=uuid.uuid4().hex,
+            request_digest="digest",
+            schema_version="1.6",
+            seed=1,
+            artifact_level="standard",
+            max_artifact_bytes=1024,
+            deadline_at=timezone.now() + timedelta(hours=1),
+            scenario_count=1,
+            payload={},
+            run_test=execution.run_test,
+            test_execution=execution,
+        )
+        for call in calls[:2]:
+            HostedHarnessScenario.no_workspace_objects.create(
+                job=job,
+                scenario_key=f"key-{call.id}",
+                call_execution=call,
+                sub_goals=["Authored goal"],
+            )
+        every = {str(call.id) for call in calls}
+
+        matching = _ids(auth_client, execution, {"sub_goal": ["Authored goal"]})
+        others = _ids(auth_client, execution, {"sub_goal_not": ["Authored goal"]})
+
+        assert matching == {str(calls[0].id), str(calls[1].id)}
+        assert others == every - matching
+
     def test_is_not_combines_with_other_filters(
         self, auth_client, execution, sub_goal_calls
     ):
@@ -497,6 +546,8 @@ class TestRunCallsV3StatusCounts:
         others = _get(
             auth_client, execution, filters=json.dumps({"goal": ["Goal 0"]})
         ).json()
+        # Read the counts afresh, not from the rows the request above cached.
+        cache.clear()
         body = _get(
             auth_client,
             execution,
@@ -505,6 +556,38 @@ class TestRunCallsV3StatusCounts:
 
         assert body["status_counts"] == others["summary"]["outcomes"]
         assert body["count"] < others["count"]
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {"search": "Goal 1"},
+            {"group_by": "status", "group_key": "failed"},
+            {"filters": {"call_execution_id": "first three"}},
+            {"filters": {"goal_not": ["Goal 1"]}},
+        ],
+        ids=["search", "group-key", "hand-off", "goal-not"],
+    )
+    def test_they_follow_every_other_narrowing(
+        self, auth_client, execution, calls, params
+    ):
+        filters = dict(params.get("filters", {}))
+        if filters.get("call_execution_id"):
+            filters["call_execution_id"] = [str(call.id) for call in calls[:3]]
+        query = {key: value for key, value in params.items() if key != "filters"}
+
+        cache.clear()
+        others = _get(
+            auth_client, execution, **query, filters=json.dumps(filters)
+        ).json()
+        cache.clear()
+        body = _get(
+            auth_client,
+            execution,
+            **query,
+            filters=json.dumps({**filters, "status": ["passed"]}),
+        ).json()
+
+        assert body["status_counts"] == others["summary"]["outcomes"]
 
     def test_a_status_filter_alone_counts_the_whole_run(
         self, auth_client, execution, calls
