@@ -3,8 +3,64 @@
 import django.db.models.deletion
 from django.db import migrations, models
 
+# accounts_auth_token is written on every authenticated request and never
+# purged, so no step here may hold a lock for the length of a table scan, as
+# AddField's ALTER TABLE ... REFERENCES plus CREATE INDEX inside one
+# transaction would. The columns and NOT VALID foreign keys are catalog-only,
+# VALIDATE CONSTRAINT allows reads and writes, and the indexes build
+# concurrently. A short lock_timeout keeps a busy table from queueing traffic
+# behind the ALTERs; every statement can be re-run after a failure. The
+# constraint and index names are the ones Django generates for these fields.
+ORG_FK = "accounts_auth_token_scoped_organization__888d7361_fk_accounts_"
+IDP_FK = "accounts_auth_token_origin_idp_id_100204e0_fk_saml_meta_id"
+
+
+def _add_foreign_key(name, column, target):
+    return f"""
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '{name}') THEN
+                ALTER TABLE "accounts_auth_token" ADD CONSTRAINT "{name}"
+                    FOREIGN KEY ("{column}") REFERENCES {target}
+                    DEFERRABLE INITIALLY DEFERRED NOT VALID;
+            END IF;
+        END $$;
+    """
+
+
+FORWARD = [
+    "SET lock_timeout = '5s'",
+    'ALTER TABLE "accounts_auth_token"'
+    ' ADD COLUMN IF NOT EXISTS "auth_origin" varchar(16) NULL,'
+    ' ADD COLUMN IF NOT EXISTS "origin_idp_id" varchar(100) NULL,'
+    ' ADD COLUMN IF NOT EXISTS "origin_idp_generation" integer NULL,'
+    ' ADD COLUMN IF NOT EXISTS "scoped_organization_id" uuid NULL',
+    _add_foreign_key(IDP_FK, "origin_idp_id", '"saml_meta" ("id")'),
+    _add_foreign_key(
+        ORG_FK, "scoped_organization_id", '"accounts_organization" ("id")'
+    ),
+    "RESET lock_timeout",
+    f'ALTER TABLE "accounts_auth_token" VALIDATE CONSTRAINT "{IDP_FK}"',
+    f'ALTER TABLE "accounts_auth_token" VALIDATE CONSTRAINT "{ORG_FK}"',
+    'CREATE INDEX CONCURRENTLY IF NOT EXISTS "accounts_auth_token_origin_idp_id_100204e0"'
+    ' ON "accounts_auth_token" ("origin_idp_id")',
+    'CREATE INDEX CONCURRENTLY IF NOT EXISTS "accounts_auth_token_origin_idp_id_100204e0_like"'
+    ' ON "accounts_auth_token" ("origin_idp_id" varchar_pattern_ops)',
+    'CREATE INDEX CONCURRENTLY IF NOT EXISTS "accounts_auth_token_scoped_organization_id_888d7361"'
+    ' ON "accounts_auth_token" ("scoped_organization_id")',
+]
+
+BACKWARD = [
+    'ALTER TABLE "accounts_auth_token"'
+    ' DROP COLUMN IF EXISTS "scoped_organization_id" CASCADE,'
+    ' DROP COLUMN IF EXISTS "origin_idp_generation" CASCADE,'
+    ' DROP COLUMN IF EXISTS "origin_idp_id" CASCADE,'
+    ' DROP COLUMN IF EXISTS "auth_origin" CASCADE',
+]
+
 
 class Migration(migrations.Migration):
+    atomic = False
+
     dependencies = [
         (
             "accounts",
@@ -14,41 +70,46 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name="authtoken",
-            name="auth_origin",
-            field=models.CharField(
-                blank=True,
-                choices=[("saml", "Saml")],
-                max_length=16,
-                null=True,
-            ),
-        ),
-        migrations.AddField(
-            model_name="authtoken",
-            name="origin_idp",
-            field=models.ForeignKey(
-                blank=True,
-                null=True,
-                on_delete=django.db.models.deletion.SET_NULL,
-                related_name="saml_auth_tokens",
-                to="saml2_auth.samlmetadatamodel",
-            ),
-        ),
-        migrations.AddField(
-            model_name="authtoken",
-            name="origin_idp_generation",
-            field=models.IntegerField(blank=True, null=True),
-        ),
-        migrations.AddField(
-            model_name="authtoken",
-            name="scoped_organization",
-            field=models.ForeignKey(
-                blank=True,
-                null=True,
-                on_delete=django.db.models.deletion.CASCADE,
-                related_name="scoped_auth_tokens",
-                to="accounts.organization",
-            ),
+        migrations.SeparateDatabaseAndState(
+            database_operations=[migrations.RunSQL(FORWARD, BACKWARD)],
+            state_operations=[
+                migrations.AddField(
+                    model_name="authtoken",
+                    name="auth_origin",
+                    field=models.CharField(
+                        blank=True,
+                        choices=[("saml", "Saml")],
+                        max_length=16,
+                        null=True,
+                    ),
+                ),
+                migrations.AddField(
+                    model_name="authtoken",
+                    name="origin_idp",
+                    field=models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="saml_auth_tokens",
+                        to="saml2_auth.samlmetadatamodel",
+                    ),
+                ),
+                migrations.AddField(
+                    model_name="authtoken",
+                    name="origin_idp_generation",
+                    field=models.IntegerField(blank=True, null=True),
+                ),
+                migrations.AddField(
+                    model_name="authtoken",
+                    name="scoped_organization",
+                    field=models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="scoped_auth_tokens",
+                        to="accounts.organization",
+                    ),
+                ),
+            ],
         ),
     ]
