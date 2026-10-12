@@ -364,6 +364,7 @@ const ObserveToolbar = ({
             open={customDateOpen}
             onClose={() => setCustomDateOpen(false)}
             anchorEl={dateButtonRef.current}
+            value={dateFilter?.dateFilter}
             setDateFilter={(range) => {
               setDateFilter?.((prev) => ({
                 ...prev,
