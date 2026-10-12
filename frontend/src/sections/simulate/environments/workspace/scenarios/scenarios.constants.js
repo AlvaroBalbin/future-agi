@@ -8,7 +8,7 @@
 
 import { subTasksFor } from "src/api/simulate-environments/_fixtures/contract";
 
-// Table row height, as the toolbar's picker names it: how many lines a text
+// Table row height, as the Display menu names it: how many lines a text
 // cell shows and how many sub-goals are listed. 0 lines and Infinity show all.
 export const ROW_HEIGHTS = {
   Short: { lines: 3, subTasks: 3 },
@@ -18,11 +18,9 @@ export const ROW_HEIGHTS = {
 };
 
 export const SCENARIOS_COPY = {
-  heading: "Scenarios",
-  subtitle:
-    "Each scenario is one task your agent has to complete, and carries its own persona.",
   searchPlaceholder: "Search scenarios by name, task or use case…",
   addLabel: "Add scenarios",
+  addShortLabel: "Add",
   addComingSoon: "Coming soon",
   editLabel: "Edit scenario",
   removeLabel: "Remove from this environment",
@@ -31,6 +29,8 @@ export const SCENARIOS_COPY = {
   clearLabel: "Clear",
   rowHeight: "Row height",
   groupByLabel: "Group by",
+  displayLabel: "Display",
+  viewLabel: "View",
   hideGroup: "Hide this group",
   showAll: "Show all",
   allHidden: "Every group is hidden. Click Show all to bring them back.",
