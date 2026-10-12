@@ -2835,6 +2835,19 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     setActiveViewConfig,
   ]);
 
+  // Filter-bar Save on a saved view. Moving the baseline on success keeps
+  // Save view from staying visible for changes that were just saved.
+  const saveFiltersToActiveView = useCallback(() => {
+    const config = buildViewConfig();
+    updateSavedView(
+      { id: activeViewTabId, config },
+      {
+        onSuccess: (response) =>
+          setActiveViewConfig(response?.data?.result?.config ?? config),
+      },
+    );
+  }, [activeViewTabId, buildViewConfig, updateSavedView, setActiveViewConfig]);
+
   // Default tab only — saved views go through handleSaveView instead.
   useEffect(() => {
     if (activeViewTabId) return;
@@ -3616,10 +3629,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           onSave={() => {
             setFilterChipsSaved(true);
             if (activeViewTabId) {
-              updateSavedView({
-                id: activeViewTabId,
-                config: buildViewConfig(),
-              });
+              saveFiltersToActiveView();
             } else {
               try {
                 localStorage.setItem(
@@ -3683,10 +3693,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               onClick={() => {
                 setFilterChipsSaved(true);
                 if (activeViewTabId) {
-                  updateSavedView({
-                    id: activeViewTabId,
-                    config: buildViewConfig(),
-                  });
+                  saveFiltersToActiveView();
                 } else {
                   try {
                     localStorage.setItem(

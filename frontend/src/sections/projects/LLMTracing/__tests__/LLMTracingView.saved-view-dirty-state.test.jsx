@@ -15,6 +15,7 @@ import LLMTracingView from "../LLMTracingView";
 const harness = vi.hoisted(() => ({
   updateSavedView: vi.fn(),
   toolbarProps: null,
+  filterChipsProps: null,
   filterSetters: {},
   selectedTab: "trace",
   attributes: [],
@@ -227,7 +228,12 @@ vi.mock("../GraphSection/PrimaryGraph", () => ({ default: () => null }));
 vi.mock("../GraphSection/AgentGraph", () => ({ default: () => null }));
 vi.mock("../GraphSection/AgentPath", () => ({ default: () => null }));
 vi.mock("../SelectAllBanner", () => ({ default: () => null }));
-vi.mock("../FilterChips", () => ({ default: () => null }));
+vi.mock("../FilterChips", () => ({
+  default: (props) => {
+    harness.filterChipsProps = props;
+    return null;
+  },
+}));
 vi.mock("../TracingControls", () => ({ default: () => null }));
 vi.mock("../CustomColumnDialog", () => ({ default: () => null }));
 
@@ -281,6 +287,7 @@ beforeEach(() => {
   harness.observeHeader.setActiveViewConfig.mockReset();
   harness.updateSavedView.mockReset();
   harness.filterSetters = {};
+  harness.filterChipsProps = null;
   harness.selectedTab = "trace";
 });
 afterEach(() => {
@@ -468,6 +475,45 @@ describe("LLMTracingView saved-view dirty state (TH-4883)", () => {
       retryCallbacks.onSuccess({
         data: { result: { config: payload.config } },
       }),
+    );
+    expect(harness.observeHeader.setActiveViewConfig).toHaveBeenCalledWith(
+      payload.config,
+    );
+  });
+
+  it("the filter chip Save moves the baseline to the saved config", async () => {
+    harness.observeHeader.activeViewConfig = savedView({
+      extra_filters: canonicalFilter("primary"),
+    });
+    await mountView();
+    await act(async () => harness.filterChipsProps.onSave());
+    const [payload, callbacks] = harness.updateSavedView.mock.calls[0];
+    expect(payload.id).toBe("saved-view-1");
+    await act(async () =>
+      callbacks.onSuccess({ data: { result: { config: payload.config } } }),
+    );
+    expect(harness.observeHeader.setActiveViewConfig).toHaveBeenCalledWith(
+      payload.config,
+    );
+  });
+
+  it("the compare-mode filter bar Save moves the baseline to the saved config", async () => {
+    harness.observeHeader.activeViewConfig = savedView({
+      compare_extra_filters: canonicalFilter("compare-only"),
+      display: {
+        dateFilter: { dateOption: "Custom", dateFilter: originalRange },
+        showCompare: true,
+      },
+    });
+    await mountView();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const [payload, callbacks] = harness.updateSavedView.mock.calls[0];
+    expect(payload.id).toBe("saved-view-1");
+    expect(payload.config.compare_extra_filters).toEqual(
+      canonicalFilter("compare-only"),
+    );
+    await act(async () =>
+      callbacks.onSuccess({ data: { result: { config: payload.config } } }),
     );
     expect(harness.observeHeader.setActiveViewConfig).toHaveBeenCalledWith(
       payload.config,
