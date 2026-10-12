@@ -233,13 +233,13 @@ export default function RunTraceTable({
     () => [
       {
         value: "goal",
-        label: "Goal",
+        label: "Use case",
         type: "enum",
         choices: goalOptions,
       },
       {
         value: "subGoal",
-        label: "Sub goal",
+        label: "Sub-goal",
         type: "enum",
         choices: subGoalOptions,
       },

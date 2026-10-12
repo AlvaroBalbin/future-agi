@@ -1281,7 +1281,7 @@ describe("RunTraceTable", () => {
     expect(screen.queryByPlaceholderText(/Ask AI/)).toBeNull();
   });
 
-  it("offers only Goal, Sub goal, and Status filters", async () => {
+  it("offers only Use case, Sub-goal, and Status filters", async () => {
     const user = userEvent.setup();
     renderTable();
 
@@ -1289,9 +1289,11 @@ describe("RunTraceTable", () => {
 
     const [fieldPicker] = screen.getAllByRole("combobox");
     await user.click(fieldPicker);
-    expect(screen.getByRole("option", { name: "Goal" })).toBeInTheDocument();
     expect(
-      screen.getByRole("option", { name: "Sub goal" }),
+      screen.getByRole("option", { name: "Use case" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Sub-goal" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Status" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Persona" })).toBeNull();
