@@ -173,9 +173,7 @@ axiosInstance.interceptors.response.use(
 
         if (!newAccessToken) throw new Error("No access token returned");
 
-        if (
-          refreshGeneration !== localStorage.getItem("fai_auth_generation")
-        ) {
+        if (refreshGeneration !== localStorage.getItem("fai_auth_generation")) {
           const sessionReplaced = new Error("session replaced");
           processQueue(sessionReplaced, null);
           window.location.replace("/dashboard/develop");

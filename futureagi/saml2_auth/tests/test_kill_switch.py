@@ -63,9 +63,7 @@ def test_switching_off_after_acs_refuses_completion(
 ):
     attempt, payload = _signed_login(api_client, saml_tenants, signed_a_response)
     candidate_key = post_acs(api_client, attempt.relay, payload)
-    tokens_before = AuthToken.no_workspace_objects.filter(
-        user=saml_tenants.a1
-    ).count()
+    tokens_before = AuthToken.no_workspace_objects.filter(user=saml_tenants.a1).count()
 
     with override_settings(SAML_LOGIN_ENABLED=False):
         response = complete(api_client, candidate_key)

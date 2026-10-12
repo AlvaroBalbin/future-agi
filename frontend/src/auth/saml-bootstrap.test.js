@@ -69,7 +69,7 @@ describe("SAML bootstrap barrier", () => {
     expect(localStorage.getItem("accessToken")).toBeNull();
   });
 
-  it.each(["//evil.example", "https://evil.example", "/safe\\evil", "x"]) (
+  it.each(["//evil.example", "https://evil.example", "/safe\\evil", "x"])(
     "rejects unsafe next path %s",
     (next) => {
       expect(isSafeSamlNext(next)).toBe(false);
