@@ -67,4 +67,23 @@ export const buildEvalCellModel = (value, outputType, choicesMap = {}) => {
   return { kind: "scalar", value };
 };
 
+// Chip text is 13px; 7.5px per character errs wide for common labels.
+const EVAL_COLUMN_CHAR_WIDTH = 7.5;
+const MAX_EVAL_COLUMN_WIDTH = 280;
+
+/** A starting width that fits an eval column's header and longest label. */
+export const evalColumnMinWidth = (column, fallback) => {
+  const labels = Array.isArray(column?.choices) ? column.choices : [];
+  // A count chip reads "12 label"; the header adds two icons.
+  const chipChars = Math.max(
+    0,
+    ...labels.map((label) => String(label).length + 3),
+  );
+  const headerChars = String(column?.name || "").length + 6;
+  const width = Math.round(
+    Math.max(chipChars, headerChars) * EVAL_COLUMN_CHAR_WIDTH + 40,
+  );
+  return Math.min(MAX_EVAL_COLUMN_WIDTH, Math.max(fallback, width));
+};
+
 export { normalizeVerdict };

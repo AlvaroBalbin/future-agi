@@ -3,6 +3,7 @@ import { Box, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import PropTypes from "prop-types";
 import EvalTargetGlyph from "src/components/traceDetail/EvalRollupSection/EvalTargetGlyph";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 
 const CallLogsHeaderCellRenderer = ({ displayName, targetType }) => {
   return (
@@ -22,17 +23,19 @@ const CallLogsHeaderCellRenderer = ({ displayName, targetType }) => {
         style={{ flexShrink: 0 }}
       />
       <EvalTargetGlyph targetType={targetType} />
-      <Typography
-        variant="subtitle2"
-        sx={{
-          fontWeight: 500,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {displayName}
-      </Typography>
+      <OverflowTooltip title={displayName}>
+        <Typography
+          variant="subtitle2"
+          sx={{
+            fontWeight: 500,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {displayName}
+        </Typography>
+      </OverflowTooltip>
     </Box>
   );
 };

@@ -13,6 +13,7 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { readQuery, endpoints } from "src/utils/axios";
 import { Box, Skeleton } from "@mui/material";
 import EvaluationCell from "src/sections/projects/LLMTracing/Renderers/EvaluationCell";
+import { evalColumnMinWidth } from "src/sections/projects/LLMTracing/evalCellModel";
 import { AGENT_TYPES, isLiveKitProvider, VOICE_TRANSPORT } from "./constants";
 import AnnotationHeaderCellRenderer from "./CallLogs/AnnotationHeaderCellRenderer";
 import NewAnnotationCellRenderer from "./NewAnnotationCellRenderer";
@@ -503,7 +504,7 @@ export const generateEvalColumnsFromConfig = (items = []) => {
       headerName: displayName,
       field: `eval_outputs.${evalId}`,
       flex: 1,
-      minWidth: isReason ? 240 : 140,
+      minWidth: isReason ? 240 : evalColumnMinWidth(item, 140),
       hide: item.is_visible === false,
       headerComponent: CallLogsHeaderCellRenderer,
       headerComponentParams: {

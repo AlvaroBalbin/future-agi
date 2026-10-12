@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import { useTheme } from "@mui/material/styles";
 import HeaderIcon from "./HeaderIcon";
 import EvalTargetGlyph from "src/components/traceDetail/EvalRollupSection/EvalTargetGlyph";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 
 const wrapperStyle = {
   display: "flex",
@@ -58,7 +59,9 @@ const CustomTraceHeaderRenderer = ({
         isEvaluationMetric={isEvaluationMetric}
       />
       {isEvaluationMetric && <EvalTargetGlyph targetType={targetType} />}
-      <span style={textStyle}>{displayName}</span>
+      <OverflowTooltip title={displayName}>
+        <span style={textStyle}>{displayName}</span>
+      </OverflowTooltip>
     </div>
   );
 };

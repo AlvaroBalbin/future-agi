@@ -1,16 +1,10 @@
-import React, {
-  cloneElement,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Chip, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Markdown from "react-markdown";
 import Iconify from "src/components/iconify";
-import CustomTooltip from "src/components/tooltip";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import { enqueueSnackbar } from "notistack";
 import EvalErrorLocalization from "./EvalErrorLocalization";
 import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
@@ -118,54 +112,6 @@ export function scoreColor(score) {
     text: "error.main",
   };
 }
-
-function isTruncated(el) {
-  if (el.scrollWidth > el.clientWidth) return true;
-  // scrollWidth rounds to whole pixels; a sub-pixel overflow still draws the
-  // ellipsis, so compare the text's own width too.
-  const range = document.createRange();
-  range.selectNodeContents(el);
-  const textWidth = range.getBoundingClientRect?.().width ?? 0;
-  return textWidth > el.getBoundingClientRect().width;
-}
-
-/** Hover tooltip with the full text, shown only when the text is cut off. */
-const OverflowTooltip = ({ title, children }) => {
-  const [open, setOpen] = useState(false);
-  return (
-    <CustomTooltip
-      show
-      open={open}
-      title={title}
-      placement="top"
-      arrow
-      size="small"
-      disableHoverListener
-      disableFocusListener
-      disableTouchListener
-    >
-      {cloneElement(children, {
-        onMouseEnter: (event) => {
-          children.props.onMouseEnter?.(event);
-          // A chip truncates its inner label, not its root.
-          const el =
-            event.currentTarget.querySelector?.(".MuiChip-label") ||
-            event.currentTarget;
-          setOpen(isTruncated(el));
-        },
-        onMouseLeave: (event) => {
-          children.props.onMouseLeave?.(event);
-          setOpen(false);
-        },
-      })}
-    </CustomTooltip>
-  );
-};
-
-OverflowTooltip.propTypes = {
-  title: PropTypes.node,
-  children: PropTypes.element.isRequired,
-};
 
 // Resizable columns. Until the user drags a header edge the table keeps its
 // percentage layout; the first drag freezes every column at its rendered

@@ -1,6 +1,7 @@
 import React from "react";
 import PropTypes from "prop-types";
 import { Box, Chip } from "@mui/material";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 
 import { buildEvalCellModel } from "../evalCellModel";
 
@@ -27,13 +28,15 @@ const EvalResultChips = ({ value, outputType, choicesMap }) => {
       }}
     >
       {model.chips.map((chip) => (
-        <Chip
-          key={chip.key}
-          size="small"
-          label={chip.label}
-          color={colorForTone(chip.tone)}
-          variant="outlined"
-        />
+        <OverflowTooltip key={chip.key} title={chip.label}>
+          <Chip
+            size="small"
+            label={chip.label}
+            color={colorForTone(chip.tone)}
+            variant="outlined"
+            sx={{ maxWidth: "100%" }}
+          />
+        </OverflowTooltip>
       ))}
     </Box>
   );
