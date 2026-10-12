@@ -70,6 +70,63 @@ describe("saved-view-utils", () => {
     ).toBe(false);
   });
 
+  describe("filtersContentEqual multi-select values", () => {
+    const listFilter = (filterOp, filterValue, attributeValueTypes) => ({
+      column_id: "status",
+      filter_config: {
+        col_type: "SYSTEM_METRIC",
+        filter_type: "text",
+        filter_op: filterOp,
+        filter_value: filterValue,
+        ...(attributeValueTypes
+          ? { attribute_value_types: attributeValueTypes }
+          : {}),
+      },
+    });
+
+    it("treats the same picked values in a different order as unchanged", () => {
+      expect(
+        filtersContentEqual(
+          [listFilter("in", ["OK", "UNSET", "ERROR"])],
+          [listFilter("in", ["OK", "ERROR", "UNSET"])],
+        ),
+      ).toBe(true);
+    });
+
+    it("still flags a different set of picked values", () => {
+      expect(
+        filtersContentEqual(
+          [listFilter("in", ["OK", "UNSET"])],
+          [listFilter("in", ["OK", "ERROR"])],
+        ),
+      ).toBe(false);
+    });
+
+    it("keeps range bounds ordered", () => {
+      expect(
+        filtersContentEqual(
+          [listFilter("between", [10, 1])],
+          [listFilter("between", [1, 10])],
+        ),
+      ).toBe(false);
+    });
+
+    it("reorders value types together with their values", () => {
+      expect(
+        filtersContentEqual(
+          [listFilter("in", ["1", 1], ["string", "number"])],
+          [listFilter("in", [1, "1"], ["number", "string"])],
+        ),
+      ).toBe(true);
+      expect(
+        filtersContentEqual(
+          [listFilter("in", ["1", 1], ["number", "string"])],
+          [listFilter("in", [1, "1"], ["number", "string"])],
+        ),
+      ).toBe(false);
+    });
+  });
+
   describe("dateBoundsEqual", () => {
     const range = ["2026-09-01 00:00:00", "2026-09-10 00:00:00"];
 

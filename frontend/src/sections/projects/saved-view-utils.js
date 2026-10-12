@@ -3,6 +3,30 @@
 // edits (same column, new filter value), so the Save view button stayed
 // hidden after legitimate changes.
 
+const RANGE_OPS = new Set(["between", "not_between"]);
+
+// Comparison key for a filter_config. Multi-select values are a set, so the
+// same values picked in a different order are not an edit; range bounds keep
+// their [min, max] order. attribute_value_types is index-aligned with
+// filter_value, so each value is keyed together with its type.
+const filterConfigKey = (config) => {
+  const value = config?.filter_value;
+  if (!Array.isArray(value) || RANGE_OPS.has(config.filter_op)) {
+    return JSON.stringify(config ?? null);
+  }
+  const types = Array.isArray(config.attribute_value_types)
+    ? config.attribute_value_types
+    : null;
+  const members = value
+    .map((v, i) => JSON.stringify([v, types ? types[i] : null]))
+    .sort();
+  return JSON.stringify({
+    ...config,
+    filter_value: members,
+    attribute_value_types: undefined,
+  });
+};
+
 // Deep equality for an extraFilters / structural-filter array. Saved-view
 // filters are stored and compared in the canonical API shape.
 export const filtersContentEqual = (a, b) => {
@@ -20,8 +44,8 @@ export const filtersContentEqual = (a, b) => {
       return false;
     }
     if (
-      JSON.stringify(aArr[i]?.filter_config ?? null) !==
-      JSON.stringify(bArr[i]?.filter_config ?? null)
+      filterConfigKey(aArr[i]?.filter_config) !==
+      filterConfigKey(bArr[i]?.filter_config)
     ) {
       return false;
     }
