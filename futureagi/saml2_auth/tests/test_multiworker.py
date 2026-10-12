@@ -1,8 +1,9 @@
 """Opt-in, two-process checks for the database-backed SAML protocol.
 
 The normal suite deliberately does not start ASGI workers.  These tests run
-only with the two Granian processes described in ``test-matrix.md`` so they
-can prove that the attempt store and TX-B locks are not process-local.
+only against two Granian processes (the ``saml-multiworker`` job in
+``.github/workflows/backend-ci.yml`` starts them) so they can prove that the
+attempt store and TX-B locks are not process-local.
 """
 
 from __future__ import annotations
