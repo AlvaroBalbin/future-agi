@@ -1,4 +1,4 @@
-FROM futureagi/future-agi-base:v1.0.5
+FROM futureagi/future-agi-base:v1.0.6
 
 ENV NLTK_DATA=/usr/local/share/nltk_data
 
