@@ -92,3 +92,17 @@ def test_acs_body_is_not_copied_onto_the_tracing_span():
     assert any(
         "/saml2_auth/acs/".startswith(prefix) for prefix in SENSITIVE_BODY_PATH_PREFIXES
     ), "ACS path is not excluded from request-body span capture"
+
+
+def test_denials_log_their_own_reason(api_client, idp_a):
+    """The response stays generic; the security log says what actually happened."""
+
+    with capture_security_logging() as captured:
+        api_client.get("/saml2_auth/idp-login/", {"email": "nobody@example.test"})
+        api_client.post(
+            "/saml2_auth/acs/",
+            {"RelayState": "never-issued", "SAMLResponse": "PHNhbWxwOlJlc3BvbnNlLz4="},
+        )
+
+    assert "identity_missing" in captured.rendered
+    assert "attempt_unavailable" in captured.rendered

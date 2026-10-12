@@ -232,7 +232,9 @@ class ACSView(APIView):
             )
             response.status_code = 303
             return response
-        except (SamlDenied, ValueError):
+        except SamlDenied as exc:
+            return _saml_denial_redirect(exc.reason)
+        except ValueError:
             return _saml_denial_redirect("acs_malformed")
 
 
@@ -370,7 +372,10 @@ class IDPLoginView(APIView):
                 path="/saml2_auth/",
             )
             return response
-        except (SamlDenied, StopIteration):
+        except SamlDenied as exc:
+            security_logger.warning("saml_login_denied", reason=exc.reason)
+            return self._gm.bad_request(msg)
+        except StopIteration:
             security_logger.warning("saml_login_denied", reason="idp_unavailable")
             return self._gm.bad_request(msg)
         except Exception as exc:
