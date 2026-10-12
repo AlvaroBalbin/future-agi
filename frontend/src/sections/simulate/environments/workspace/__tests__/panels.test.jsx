@@ -213,6 +213,8 @@ describe("WorkspacePanels", () => {
     renderPanels();
     await user.hover(screen.getByText("Contract"));
     expect(await screen.findByText(/What this environment is made of/)).toBeInTheDocument();
+    // The hint describes the tab; it never replaces the tab's name.
+    expect(screen.getByRole("tab", { name: "Contract" })).toBeInTheDocument();
   });
 
   it("keeps the gap list in the tooltip alongside the tab's explanation", async () => {

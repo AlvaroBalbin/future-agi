@@ -45,6 +45,9 @@ export default function WorkspaceTabLabel({ label, count, gaps, hint }) {
   return (
     <CustomTooltip
       show={hasGaps || !!hint}
+      // The hint describes the tab; without this a rich title would become
+      // the tab's accessible name while it shows.
+      describeChild
       arrow
       size="small"
       enterDelay={hasGaps ? 100 : 400}
