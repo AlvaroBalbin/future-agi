@@ -111,26 +111,32 @@ EVAL_COMPLETED_PREDICATE = (
 
 
 def latest_completed_eval_rows(
-    collapsed_sql: str, live_predicate: str, partition_by: str
+    collapsed_sql: str,
+    live_predicate: str,
+    partition_by: str,
+    *,
+    completed_predicate: str = EVAL_COMPLETED_PREDICATE,
+    newest_first: str = "created_at DESC, toString(id) DESC",
 ) -> str:
     """FROM-source keeping only the newest completed row per *partition_by*.
 
-    *collapsed_sql* is a parenthesised ``LIMIT 1 BY id`` subquery that projects
-    ``id``, ``created_at`` and the live-state columns. The live predicate still
-    applies outside that collapse. Non-completed rows all pass through, so
-    lifecycle and error markers keep their precedence. Ties break on
-    ``(created_at, id)``, as in the trace-detail rollup's
-    ``select_latest_completed``.
+    *collapsed_sql* is a parenthesised per-``id`` version-collapse subquery
+    that projects the columns the predicates and ordering read. The live
+    predicate still applies outside that collapse. Non-completed rows all pass
+    through, so lifecycle and error markers keep their precedence. Ties break
+    on ``(created_at, id)``, as in the trace-detail rollup's
+    ``select_latest_completed``; readers whose collapse renames those columns
+    pass their own *completed_predicate* and *newest_first*.
     """
 
     return f"""(
             SELECT
                 *,
                 row_number() OVER (
-                    PARTITION BY {partition_by}, ({EVAL_COMPLETED_PREDICATE})
-                    ORDER BY created_at DESC, toString(id) DESC
+                    PARTITION BY {partition_by}, ({completed_predicate})
+                    ORDER BY {newest_first}
                 ) AS completed_rank
             FROM {collapsed_sql}
             WHERE {live_predicate}
         )
-        WHERE NOT ({EVAL_COMPLETED_PREDICATE}) OR completed_rank = 1"""
+        WHERE NOT ({completed_predicate}) OR completed_rank = 1"""

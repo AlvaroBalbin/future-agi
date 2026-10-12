@@ -7,6 +7,7 @@ one completed attempt per span, so their totals are intentionally different.
 
 from tracer.services.eval_tiles import (
     build_eval_rollup,
+    count_column_metadata,
     count_mode_cell,
     normalize_verdict,
     select_latest_completed,
@@ -232,3 +233,27 @@ def test_normalize_verdict_only_maps_boolean_verdicts():
     assert normalize_verdict(True) == "pass"
     assert normalize_verdict(False) == "fail"
     assert normalize_verdict(0.75) is None
+
+
+def test_count_column_metadata_reads_target_types_and_observed_choices():
+    rows = [
+        {"eval_config_id": "tone", "target_type": "span"},
+        {"eval_config_id": "gap", "target_type": "trace"},
+        {"eval_config_id": "helpful", "target_type": "session"},
+    ]
+    eval_map = {
+        "trace-1": {
+            "tone": {"neutral": 1, "apologetic": 0},
+            "helpful": {"pass": 1, "fail": 0},
+        },
+        "trace-2": {"tone": {"neutral": 0, "joy": 1}, "gap": {"error": True}},
+    }
+
+    target_types, observed = count_column_metadata(
+        rows,
+        eval_map,
+        {"tone": "choices", "gap": "choices", "helpful": "Pass/Fail"},
+    )
+
+    assert target_types == {"tone": "span", "gap": "trace"}
+    assert observed == {"tone": ["neutral", "apologetic", "joy"]}

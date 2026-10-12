@@ -20,6 +20,9 @@ from tracer.services.clickhouse.query_builders.span_list import SpanListQueryBui
 from tracer.services.clickhouse.v2.query_builders.trace_list import (
     TraceListQueryBuilderV2,
 )
+from tracer.services.clickhouse.v2.query_builders.voice_call_list import (
+    VoiceCallListQueryBuilderV2,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -45,7 +48,11 @@ def eval_table(ch_client, monkeypatch):
         prefix = f"{alias}." if alias else ""
         return table, f"{prefix}is_deleted = 0"
 
-    for builder in (TraceListQueryBuilderV2, SpanListQueryBuilder):
+    for builder in (
+        TraceListQueryBuilderV2,
+        SpanListQueryBuilder,
+        VoiceCallListQueryBuilderV2,
+    ):
         monkeypatch.setattr(
             builder, "_EVAL_LOGGER_SOURCE", staticmethod(test_eval_source)
         )
@@ -176,3 +183,26 @@ def test_span_count_tiles_read_the_newest_completed_result(ch_client, eval_table
     assert [
         json.loads(labels) for labels in rows[("span-b", CHOICES)]["str_lists"]
     ] == [["unclear"]]
+
+
+def test_voice_call_count_tiles_count_each_span_once(ch_client, eval_table):
+    builder = VoiceCallListQueryBuilderV2(
+        project_id=PROJECT_ID, eval_config_ids=[PASS_FAIL, CHOICES]
+    )
+
+    counted = _by_config(
+        _run(ch_client, *builder.build_eval_query([TRACE_ID], count_mode=True))
+    )
+    assert counted[PASS_FAIL]["pass_count"] == 1
+    assert counted[PASS_FAIL]["fail_count"] == 1
+    assert counted[PASS_FAIL]["error_count"] == 1
+    assert counted[PASS_FAIL]["target_type"] == "span"
+    assert [json.loads(labels) for labels in counted[CHOICES]["str_lists"]] == [
+        ["unclear"]
+    ]
+
+    averaged = _by_config(
+        _run(ch_client, *builder.build_eval_query([TRACE_ID]))
+    )
+    assert averaged[PASS_FAIL]["success_count"] == 3
+    assert "pass_count" not in averaged[PASS_FAIL]

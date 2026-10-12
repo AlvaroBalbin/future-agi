@@ -22,7 +22,10 @@ from typing import Any
 
 from django.conf import settings
 
-from tracer.services.clickhouse.eval_logger_table import eval_logger_source
+from tracer.services.clickhouse.eval_logger_table import (
+    eval_logger_source,
+    latest_completed_eval_rows,
+)
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryBuilder
@@ -1216,8 +1219,15 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
     def build_eval_query(
         self,
         trace_ids: list[str],
+        *,
+        count_mode: bool = False,
     ) -> tuple[str, dict[str, Any]]:
-        """Build eval-scores query for a page of trace IDs."""
+        """Build eval-scores query for a page of trace IDs.
+
+        ``count_mode`` adds the exact pass/fail counts and target type the
+        call-log count tiles read, counting each span once by its newest
+        completed result, as the Observe trace list does.
+        """
         if not trace_ids or not self.eval_config_ids:
             return "", {}
 
@@ -1257,6 +1267,53 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         # trace_id, eval_config_id, avg_score, pass_rate, success_count,
         # error_count, eval_count, str_lists — new per-status columns are
         # appended after ``str_lists`` so the pivot's positional fallbacks hold.
+        completed = (
+            "latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' "
+            "AND latest_status NOT IN ('pending', 'running', 'skipped', 'errored')"
+        )
+        count_projection = ""
+        count_inner_projection = ""
+        if count_mode:
+            count_projection = f"""
+            , countIf(latest_output_bool = 1 AND {completed}) AS pass_count
+            , countIf(latest_output_bool = 0 AND {completed}) AS fail_count
+            , argMax(latest_target_type, latest_created_at) AS target_type
+            """
+            count_inner_projection = f""",
+                argMax(observation_span_id, {version}) AS latest_observation_span_id,
+                argMax(created_at, {version}) AS latest_created_at,
+                argMax(target_type, {version}) AS latest_target_type"""
+
+        collapsed = f"""(
+            SELECT
+                id AS grouped_eval_id,
+                argMax(trace_id, {version}) AS latest_trace_id,
+                argMax(custom_eval_config_id, {version}) AS latest_eval_config_id,
+                argMax(tuple(output_float), {version}).1 AS latest_output_float,
+                argMax(tuple(output_bool), {version}).1 AS latest_output_bool,
+                argMax(tuple(output_str), {version}).1 AS latest_output_str,
+                argMax(output_str_list, {version}) AS latest_output_str_list,
+                argMax(error, {version}) AS latest_error,
+                {status_aggregate} AS latest_status,
+                {skipped_reason_aggregate} AS latest_skipped_reason,
+                {deleted_aggregate} AS latest_is_deleted{count_inner_projection}
+            FROM {table}
+            PREWHERE trace_id IN %(trace_ids)s
+              AND custom_eval_config_id IN %(eval_config_ids)s
+            GROUP BY id
+        )"""
+        if count_mode:
+            eval_source = latest_completed_eval_rows(
+                collapsed,
+                "latest_is_deleted = 0",
+                "latest_trace_id, latest_eval_config_id, latest_observation_span_id",
+                completed_predicate=completed,
+                newest_first="latest_created_at DESC, toString(grouped_eval_id) DESC",
+            )
+        else:
+            eval_source = f"""{collapsed} AS latest_voice_evals
+        WHERE latest_is_deleted = 0"""
+
         query = f"""
         SELECT
             latest_trace_id AS trace_id,
@@ -1286,25 +1343,8 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             countIf(latest_status = 'running') AS running_count,
             countIf(latest_status = 'pending') AS pending_count,
             anyIf(latest_skipped_reason, latest_status = 'skipped') AS skipped_reason
-        FROM (
-            SELECT
-                id AS grouped_eval_id,
-                argMax(trace_id, {version}) AS latest_trace_id,
-                argMax(custom_eval_config_id, {version}) AS latest_eval_config_id,
-                argMax(tuple(output_float), {version}).1 AS latest_output_float,
-                argMax(tuple(output_bool), {version}).1 AS latest_output_bool,
-                argMax(tuple(output_str), {version}).1 AS latest_output_str,
-                argMax(output_str_list, {version}) AS latest_output_str_list,
-                argMax(error, {version}) AS latest_error,
-                {status_aggregate} AS latest_status,
-                {skipped_reason_aggregate} AS latest_skipped_reason,
-                {deleted_aggregate} AS latest_is_deleted
-            FROM {table}
-            PREWHERE trace_id IN %(trace_ids)s
-              AND custom_eval_config_id IN %(eval_config_ids)s
-            GROUP BY id
-        ) AS latest_voice_evals
-        WHERE latest_is_deleted = 0
+            {count_projection}
+        FROM {eval_source}
         GROUP BY latest_trace_id, latest_eval_config_id
         ORDER BY latest_trace_id ASC, latest_eval_config_id ASC
         LIMIT 5001

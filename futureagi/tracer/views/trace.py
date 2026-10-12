@@ -160,6 +160,10 @@ from tracer.services.clickhouse.v2.trace_detail_reads import (
     TraceDetailReadUnavailable,
     read_trace_detail,
 )
+from tracer.services.eval_tiles import (
+    count_column_metadata,
+    select_latest_completed,
+)
 from tracer.services.filter_attestation import (
     applied_filter_attestation,
     graph_execution_filters,
@@ -187,7 +191,6 @@ from tracer.utils.helper import (
     get_annotation_labels_for_project,
     get_default_trace_config,
     get_project_eval_configs,
-    select_eval_score,
     update_column_config_based_on_eval_config,
     update_span_column_config_based_on_annotations,
 )
@@ -668,6 +671,16 @@ def _pivot_voice_detail_eval_rows(
                 continue
             completed.append(eval_row)
 
+        # Each span counts once, by its newest completed result, as on the
+        # call list and the trace-detail rollup.
+        by_span: dict[str, list[dict[str, Any]]] = {}
+        for eval_row in completed:
+            span_id = str(
+                eval_row.get("span_id") or eval_row.get("observation_span_id") or ""
+            )
+            by_span.setdefault(span_id, []).append(eval_row)
+        completed = [select_latest_completed(span_rows) for span_rows in by_span.values()]
+
         # Completed rows have precedence over a partial error, matching the
         # list endpoint's completed > errored > lifecycle state contract.
         if completed:
@@ -1073,7 +1086,12 @@ def _voice_call_export_projection(
             eval_name = str(eval_data.get("name") or f"Eval_{config_id}")
             output = eval_data.get("output", "")
             reason = eval_data.get("reason", "")
-            row_data[eval_name] = "" if output is None else str(output)
+            counts = eval_data.get("counts")
+            if isinstance(counts, Mapping):
+                # Count tiles export as the call list shows them.
+                row_data[eval_name] = json.dumps(counts)
+            else:
+                row_data[eval_name] = "" if output is None else str(output)
             row_data[f"{eval_name}_reason"] = "" if reason is None else str(reason)
         for attribute_key in custom_columns:
             row_data[attribute_key] = result.get(attribute_key, "")
@@ -4983,9 +5001,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         }
         eval_target_types: dict[str, str | None] = {}
         eval_observed_choice_labels: dict[str, list[str]] = {}
-        # This is deliberately the count projection used only by the Observe
-        # session list. The ordinary trace and voice paths keep their average
-        # / percentage projection.
+        # Observe lists show exact count tiles. The prototype trace list and
+        # other non-Observe readers keep their average / percentage projection.
         eval_query, eval_params = builder.build_eval_replay_query(
             trace_ids, count_mode=True
         )
@@ -5301,22 +5318,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     output_types=eval_output_types,
                     declared_choices=eval_declared_choices,
                 )
-                for eval_row in expanded_eval_rows:
-                    config_id = str(eval_row.get("eval_config_id") or "")
-                    target_type = eval_row.get("target_type")
-                    if config_id and target_type in {"span", "trace"}:
-                        eval_target_types[config_id] = target_type
-                for trace_evals in eval_map.values():
-                    for config_id, cell in trace_evals.items():
-                        if eval_output_types.get(config_id) != EvalOutputType.CHOICES.value:
-                            continue
-                        if isinstance(cell, dict) and not cell.get("error") and not cell.get("status"):
-                            labels = eval_observed_choice_labels.setdefault(
-                                config_id, []
-                            )
-                            for label in cell:
-                                if label not in labels:
-                                    labels.append(label)
+                eval_target_types, eval_observed_choice_labels = (
+                    count_column_metadata(
+                        expanded_eval_rows, eval_map, eval_output_types
+                    )
+                )
             except (TypeError, ValueError) as exc:
                 logger.warning(
                     "trace_list_eval_replay_invalid",
@@ -6145,10 +6151,18 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         trace_ids = [str(row.get("trace_id", "")) for row in page_rows]
 
-        # Phase 2: Eval scores
+        # Phase 2: Eval scores, as the same count tiles the Observe lists show.
         eval_map = {}
+        eval_output_types = {
+            str(config.id): eval_output_type_for_config(config)
+            for config in eval_configs
+        }
+        eval_target_types: dict[str, str] = {}
+        eval_observed_choice_labels: dict[str, list[str]] = {}
         if trace_ids and eval_config_ids:
-            eval_query, eval_params = builder.build_eval_query(trace_ids)
+            eval_query, eval_params = builder.build_eval_query(
+                trace_ids, count_mode=True
+            )
             if eval_query:
                 try:
                     eval_timeout_ms = read_deadline.remaining_ms(1_500)
@@ -6193,6 +6207,18 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 eval_map = TraceListQueryBuilderV2.pivot_eval_results(
                     [(list(row.values())) for row in eval_result.data],
                     list(eval_result.data[0].keys()) if eval_result.data else [],
+                    count_mode=True,
+                    output_types=eval_output_types,
+                    declared_choices={
+                        str(config.id): list(config.eval_template.choices or [])
+                        for config in eval_configs
+                        if getattr(config, "eval_template", None) is not None
+                    },
+                )
+                eval_target_types, eval_observed_choice_labels = (
+                    count_column_metadata(
+                        eval_result.data, eval_map, eval_output_types
+                    )
                 )
 
         # Phase 3: Annotations — fetch from PG Score (unified annotation system)
@@ -6219,8 +6245,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         column_config = update_column_config_based_on_eval_config(
             [],
             eval_configs,
+            skip_choices=True,
             is_simulator=True,
             property_source="traces",
+            target_types=eval_target_types,
+            observed_choice_labels=eval_observed_choice_labels,
+            count_mode=True,
         )
         column_config = update_span_column_config_based_on_annotations(
             column_config, annotation_labels
@@ -6391,44 +6421,32 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                             metrics[config_id] = metric_entry
                             continue
                         if isinstance(scores, dict):
-                            if scores.get("per_choice"):
+                            # A count tile. ``output`` keeps the pass rate /
+                            # chosen labels that the voice drawer, annotation
+                            # queue and simulate views read.
+                            metric_entry["counts"] = scores
+                            if output_type == EvalOutputType.PASS_FAIL.value:
+                                passed = scores.get("pass", 0)
+                                total = passed + scores.get("fail", 0)
+                                metric_entry["output"] = (
+                                    round(passed * 100 / total, 2) if total else None
+                                )
+                            else:
                                 metric_entry["output"] = [
-                                    k for k, v in scores["per_choice"].items() if v > 0
+                                    label for label, count in scores.items() if count
                                 ]
                                 metric_entry["output_type"] = "str_list"
-                            elif "str_list" in scores and scores["str_list"]:
-                                metric_entry["output"] = scores["str_list"]
-                                metric_entry["output_type"] = "str_list"
-                            elif "avg_score" in scores or "pass_rate" in scores:
-                                # PASS_FAIL → pass_rate, else → avg_score. Both
-                                # come pre-scaled (×100) from pivot_eval_results;
-                                # keep 0.0 (check is-not-None, not truthiness).
-                                score_val = select_eval_score(scores, output_type)
-                                metric_entry["output"] = (
-                                    round(score_val, 2)
-                                    if isinstance(score_val, (int, float))
-                                    else score_val
-                                )
                         else:
                             metric_entry["output"] = scores
                         metrics[config_id] = metric_entry
                 if metrics:
                     entry["eval_outputs"] = metrics
 
-                # Flatten eval values onto the row too. CHOICES columns read the
-                # flat key params.data["{config_id}**{choice}"] directly; score /
-                # pass-fail columns read params.data.eval_outputs[dataKey]. Without
-                # this flatten the per-choice columns stay blank in the UI.
+                # The flat key carries the cell itself, as on the trace list.
                 for eval_config in eval_configs:
                     cid = str(eval_config.id)
-                    if cid not in trace_evals:
-                        continue
-                    flatten_eval_score_into_entry(
-                        entry,
-                        cid,
-                        trace_evals[cid],
-                        eval_output_type_for_config(eval_config),
-                    )
+                    if cid in trace_evals:
+                        entry[cid] = trace_evals[cid]
 
             # Add annotation outputs — flatten onto the row for frontend grid compatibility
             # Frontend valueGetter reads params.data[labelId] directly

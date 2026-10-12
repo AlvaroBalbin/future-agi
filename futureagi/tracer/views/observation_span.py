@@ -60,7 +60,7 @@ from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
-from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
+from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
@@ -163,6 +163,7 @@ from tracer.services.clickhouse.v2.span_selectors import (
     flatten_span_attributes_into_entry,
     merge_content_rows,
 )
+from tracer.services.eval_tiles import count_column_metadata
 from tracer.services.filter_attestation import (
     applied_filter_attestation,
     graph_execution_filters,
@@ -2537,22 +2538,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 output_types=eval_output_types,
                 declared_choices=eval_declared_choices,
             )
-            for eval_row in eval_result.data:
-                config_id = str(eval_row.get("eval_config_id") or "")
-                target_type = eval_row.get("target_type")
-                if config_id and target_type in {"span", "trace"}:
-                    eval_target_types[config_id] = target_type
-            for span_evals in external_map.values():
-                for config_id, cell in span_evals.items():
-                    if eval_output_types.get(config_id) != EvalOutputType.CHOICES.value:
-                        continue
-                    if isinstance(cell, dict) and not cell.get("error") and not cell.get("status"):
-                        labels = eval_observed_choice_labels.setdefault(
-                            config_id, []
-                        )
-                        for label in cell:
-                            if label not in labels:
-                                labels.append(label)
+            target_types, observed_labels = count_column_metadata(
+                eval_result.data, external_map, eval_output_types
+            )
+            eval_target_types.update(target_types)
+            eval_observed_choice_labels.update(observed_labels)
             # Every copy gets the pivot; the table below keeps only the
             # columns of configs owned by the row's project.
             value = {

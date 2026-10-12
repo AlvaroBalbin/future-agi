@@ -373,3 +373,37 @@ def build_eval_rollup(
             "evals": scoped_evals,
         }
     return result
+
+
+def count_column_metadata(
+    eval_rows: Iterable[Mapping[str, Any]],
+    eval_map: Mapping[str, Mapping[str, Any]],
+    output_types: Mapping[str, str | None],
+) -> tuple[dict[str, str], dict[str, list[str]]]:
+    """Per-config column metadata for an Observe count-tile list page.
+
+    Returns ``(target_types, observed_choice_labels)``: the span/trace target
+    seen in the page's eval rows (session and unknown targets stay absent),
+    and, for choice evals, every label present in a count cell, in first-seen
+    order, so a column keeps labels its template no longer declares.
+    """
+
+    target_types: dict[str, str] = {}
+    for row in eval_rows:
+        config_id = str(row.get("eval_config_id") or "")
+        target_type = row.get("target_type")
+        if config_id and target_type in {"span", "trace"}:
+            target_types[config_id] = target_type
+
+    observed: dict[str, list[str]] = {}
+    for cells in eval_map.values():
+        for config_id, cell in cells.items():
+            if _output_kind(output_types.get(config_id)) != "CHOICES":
+                continue
+            if not isinstance(cell, Mapping) or cell.get("error") or cell.get("status"):
+                continue
+            labels = observed.setdefault(config_id, [])
+            for label in cell:
+                if label not in labels:
+                    labels.append(label)
+    return target_types, observed
