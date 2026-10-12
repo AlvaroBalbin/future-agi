@@ -17,6 +17,7 @@ import {
   PENDING_EVAL_STATUS,
   isBad,
   neutralCheckboxSx,
+  pinnedLeftSx,
 } from "./traceTable.constants";
 import { CellSkeleton } from "./traceCells";
 
@@ -190,7 +191,16 @@ export default function TraceGroupHeaderRow({
     <TableRow onClick={onToggle}>
       {/* Keeps the grid aligned under the call rows' checkbox column. */}
       {leadingCell && (
-        <TableCell sx={{ ...cellSx, px: 1, width: 44, textAlign: "center" }}>
+        <TableCell
+          sx={{
+            ...cellSx,
+            ...pinnedLeftSx,
+            zIndex: 3,
+            px: 1,
+            width: 44,
+            textAlign: "center",
+          }}
+        >
           {checkbox?.selectable && (
             <Checkbox
               size="small"
