@@ -340,6 +340,7 @@ def update_column_config_based_on_eval_config(
     property_source: str | None = None,
     target_types: dict[str, str | None] | None = None,
     observed_choice_labels: dict[str, list[str]] | None = None,
+    count_mode: bool = False,
 ):
     if not column_config:
         column_config = []
@@ -374,8 +375,13 @@ def update_column_config_based_on_eval_config(
                     )
                 )
 
-        # For simulator projects, don't add "Avg." prefix
-        name_prefix = "" if is_simulator else "Avg. "
+        # For simulator projects, don't add "Avg." prefix. Observe count tiles
+        # show Pass/Fail and choice evals as counts, not averages.
+        is_count_column = count_mode and output_type in (
+            EvalOutputType.PASS_FAIL.value,
+            EvalOutputType.CHOICES.value,
+        )
+        name_prefix = "" if is_simulator or is_count_column else "Avg. "
 
         eval_template_id = str(item.eval_template.id)
 

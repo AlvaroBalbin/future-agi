@@ -31,3 +31,37 @@ def test_observe_eval_column_unions_observed_choices_and_exposes_target_type():
     assert columns[0]["target_type"] == "span"
     assert columns[0]["choices"] == ["declared", "legacy"]
     assert columns[0]["choices_map"]["legacy"] == "neutral"
+
+
+def _config(config_id, name, output):
+    return SimpleNamespace(
+        id=config_id,
+        name=name,
+        eval_template=SimpleNamespace(
+            id=f"template-{config_id}",
+            choices=["Passed", "Failed"] if output != "score" else None,
+            config={"output": output},
+        ),
+    )
+
+
+def test_count_columns_drop_the_avg_prefix_but_averaged_scores_keep_it():
+    configs = [
+        _config("pf", "Helpful", EvalOutputType.PASS_FAIL.value),
+        _config("ch", "Tone", EvalOutputType.CHOICES.value),
+        _config("sc", "Relevance", EvalOutputType.SCORE.value),
+    ]
+
+    counted = update_column_config_based_on_eval_config(
+        [], configs, skip_choices=True, count_mode=True
+    )
+    assert [c["name"] for c in counted] == ["Helpful", "Tone", "Avg. Relevance"]
+
+    averaged = update_column_config_based_on_eval_config(
+        [], configs, skip_choices=True
+    )
+    assert [c["name"] for c in averaged] == [
+        "Avg. Helpful",
+        "Avg. Tone",
+        "Avg. Relevance",
+    ]
