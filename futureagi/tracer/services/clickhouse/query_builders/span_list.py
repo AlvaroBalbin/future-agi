@@ -27,6 +27,7 @@ from tracer.services.clickhouse.eval_logger_table import (
     eval_logger_live_state_columns,
     eval_logger_source,
     eval_logger_version_column,
+    latest_completed_eval_rows,
 )
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.eval_status import (
@@ -2403,7 +2404,43 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             ) AS fail_count
             , argMax(target_type, created_at) AS target_type
             """
-            count_inner_projection = ",\n                created_at,\n                target_type"
+            count_inner_projection = (
+                ",\n                id,\n                created_at,"
+                "\n                target_type"
+            )
+
+        collapsed = f"""(
+            SELECT
+                {trace_inner_select}
+                observation_span_id,
+                custom_eval_config_id,
+                output_float,
+                output_bool,
+                output_str,
+                output_str_list,
+                error,
+                {status_projection},
+                {skipped_reason_projection},
+                {live_projection}{count_inner_projection}
+            FROM {eval_table}
+            WHERE observation_span_id IN %(span_ids)s
+              {entity_fragment}
+              AND custom_eval_config_id IN %(eval_config_ids)s
+              {created_fragment}
+            ORDER BY {eval_version_col} DESC
+            LIMIT 1 BY id
+        )"""
+        if count_mode:
+            # A tile shows the span's newest completed result, the row the
+            # trace-detail rollup shows for that span.
+            eval_source = latest_completed_eval_rows(
+                collapsed,
+                live_predicate,
+                f"{trace_group}observation_span_id, custom_eval_config_id",
+            )
+        else:
+            eval_source = f"""{collapsed}
+        WHERE {live_predicate}"""
 
         query = f"""
         SELECT
@@ -2439,28 +2476,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         -- Candidate-scoped latest replay. Live/tombstone predicates are
         -- intentionally outside LIMIT 1 BY id so a newest deletion marker
         -- cannot resurrect an older score.
-        FROM (
-            SELECT
-                {trace_inner_select}
-                observation_span_id,
-                custom_eval_config_id,
-                output_float,
-                output_bool,
-                output_str,
-                output_str_list,
-                error,
-                {status_projection},
-                {skipped_reason_projection},
-                {live_projection}{count_inner_projection}
-            FROM {eval_table}
-            WHERE observation_span_id IN %(span_ids)s
-              {entity_fragment}
-              AND custom_eval_config_id IN %(eval_config_ids)s
-              {created_fragment}
-            ORDER BY {eval_version_col} DESC
-            LIMIT 1 BY id
-        )
-        WHERE {live_predicate}
+        FROM {eval_source}
         GROUP BY {trace_group}observation_span_id, custom_eval_config_id
         SETTINGS max_bytes_before_external_group_by = 1073741824, max_bytes_before_external_sort = 1073741824
         """

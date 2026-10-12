@@ -22,6 +22,7 @@ from tracer.services.clickhouse.eval_logger_table import (
     eval_logger_live_state_columns,
     eval_logger_source,
     eval_logger_version_column,
+    latest_completed_eval_rows,
 )
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.eval_status import (
@@ -5645,7 +5646,40 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             ) AS fail_count
             , argMax(target_type, created_at) AS target_type
             """
-            count_inner_projection = ",\n                created_at,\n                target_type"
+            count_inner_projection = (
+                ",\n                id,\n                observation_span_id,"
+                "\n                created_at,\n                target_type"
+            )
+
+        collapsed = f"""(
+            SELECT
+                trace_id,
+                custom_eval_config_id,
+                output_float,
+                output_bool,
+                output_str,
+                output_str_list,
+                error,
+                {status_projection},
+                {skipped_reason_projection},
+                {live_projection}{count_inner_projection}
+            FROM {eval_table}
+            WHERE trace_id IN %(trace_ids)s
+              AND custom_eval_config_id IN %(eval_config_ids)s
+            ORDER BY {eval_version} DESC
+            LIMIT 1 BY id
+        )"""
+        if count_mode:
+            # A tile counts each span once: its newest completed result, the
+            # row the trace-detail rollup shows for that span.
+            eval_source = latest_completed_eval_rows(
+                collapsed,
+                live_predicate,
+                "trace_id, custom_eval_config_id, observation_span_id",
+            )
+        else:
+            eval_source = f"""{collapsed}
+        WHERE {live_predicate}"""
 
         query = f"""
         SELECT
@@ -5680,25 +5714,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         -- Candidate-scoped latest replay: live/tombstone predicates belong
         -- outside LIMIT 1 BY id. Applying them in the inner scan resurrects an
         -- older score when its newest physical version is a deletion marker.
-        FROM (
-            SELECT
-                trace_id,
-                custom_eval_config_id,
-                output_float,
-                output_bool,
-                output_str,
-                output_str_list,
-                error,
-                {status_projection},
-                {skipped_reason_projection},
-                {live_projection}{count_inner_projection}
-            FROM {eval_table}
-            WHERE trace_id IN %(trace_ids)s
-              AND custom_eval_config_id IN %(eval_config_ids)s
-            ORDER BY {eval_version} DESC
-            LIMIT 1 BY id
-        )
-        WHERE {live_predicate}
+        FROM {eval_source}
         GROUP BY trace_id, custom_eval_config_id
         """
         return query, params

@@ -100,3 +100,37 @@ def eval_logger_source(
         if include_cdc_tombstone_guard:
             predicate = f"{p}_peerdb_is_deleted = 0 AND {predicate}"
     return table, predicate
+
+
+# A completed, non-errored eval row. Legacy rows mirrored with an empty status
+# stay completed.
+EVAL_COMPLETED_PREDICATE = (
+    "error = 0 AND ifNull(output_str, '') != 'ERROR' "
+    "AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')"
+)
+
+
+def latest_completed_eval_rows(
+    collapsed_sql: str, live_predicate: str, partition_by: str
+) -> str:
+    """FROM-source keeping only the newest completed row per *partition_by*.
+
+    *collapsed_sql* is a parenthesised ``LIMIT 1 BY id`` subquery that projects
+    ``id``, ``created_at`` and the live-state columns. The live predicate still
+    applies outside that collapse. Non-completed rows all pass through, so
+    lifecycle and error markers keep their precedence. Ties break on
+    ``(created_at, id)``, as in the trace-detail rollup's
+    ``select_latest_completed``.
+    """
+
+    return f"""(
+            SELECT
+                *,
+                row_number() OVER (
+                    PARTITION BY {partition_by}, ({EVAL_COMPLETED_PREDICATE})
+                    ORDER BY created_at DESC, toString(id) DESC
+                ) AS completed_rank
+            FROM {collapsed_sql}
+            WHERE {live_predicate}
+        )
+        WHERE NOT ({EVAL_COMPLETED_PREDICATE}) OR completed_rank = 1"""
