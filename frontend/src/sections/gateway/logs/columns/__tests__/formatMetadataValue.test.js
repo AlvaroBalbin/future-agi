@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { formatMetadataValue, readMetadataValue } from "../formatMetadataValue";
 
 describe("formatMetadataValue (R17-R24, AC7, AC8)", () => {
@@ -43,21 +43,69 @@ describe("formatMetadataValue (R17-R24, AC7, AC8)", () => {
     expect(exact.truncated).toBe(false);
   });
 
-  it("caps the tooltip at 2,000 characters and marks it truncated", () => {
+  it("caps the tooltip at 2,000 characters and marks it truncated up front, where it is always visible", () => {
     const value = "z".repeat(2001);
     const result = formatMetadataValue(value);
-    expect(result.full).toBe(`${"z".repeat(2000)} [truncated]`);
+    expect(result.full).toBe(`[truncated] ${"z".repeat(2000)}`);
     expect(result.truncated).toBe(true);
     const big = formatMetadataValue("w".repeat(1_000_000));
     expect(big.text).toHaveLength(80);
-    expect(big.full).toHaveLength(2000 + " [truncated]".length);
+    expect(big.full).toHaveLength("[truncated] ".length + 2000);
   });
 
-  it("cuts on code points so an emoji at either limit is never split", () => {
-    const preview = formatMetadataValue(`${"a".repeat(78)}😀${"b".repeat(10)}`);
-    expect(preview.text).toBe(`${"a".repeat(78)}😀…`);
-    const tooltip = formatMetadataValue(`${"c".repeat(1999)}😀d`);
-    expect(tooltip.full).toBe(`${"c".repeat(1999)}😀 [truncated]`);
+  it("uses logical grapheme limits even when clusters exceed the UTF-16 budget", () => {
+    // Combining marks stack without limit, so a cluster has no size bound.
+    const fat = `a${"\u0301".repeat(200)}`; // 201 UTF-16 units
+    const preview = formatMetadataValue(fat.repeat(100));
+    expect(preview.text).toBe(`${fat.repeat(79)}…`);
+    expect(preview.truncated).toBe(true);
+
+    const mark = `a${"\u0301".repeat(50)}`; // 51 UTF-16 units
+    const tooltip = formatMetadataValue(mark.repeat(3000));
+    expect(tooltip.full).toBe(`[truncated] ${mark.repeat(2000)}`);
+  });
+
+  it("preserves a single oversized grapheme instead of discarding the whole value", () => {
+    const value = `a${String.fromCharCode(0x0301).repeat(9000)}`;
+    expect(formatMetadataValue(value)).toEqual({
+      text: value,
+      full: value,
+      truncated: false,
+    });
+  });
+
+  it.each([
+    ["an emoji", "😀"],
+    ["a flag", "🇯🇵"],
+    ["a ZWJ family", "👨‍👩‍👧"],
+  ])(
+    "cuts on grapheme clusters so %s at either limit is never split",
+    (_label, emoji) => {
+      const preview = formatMetadataValue(
+        `${"a".repeat(78)}${emoji}${"b".repeat(10)}`,
+      );
+      expect(preview.text).toBe(`${"a".repeat(78)}${emoji}…`);
+      const tooltip = formatMetadataValue(`${"c".repeat(1999)}${emoji}d`);
+      expect(tooltip.full).toBe(`[truncated] ${"c".repeat(1999)}${emoji}`);
+    },
+  );
+
+  it("falls back to code points where Intl.Segmenter is unavailable", async () => {
+    vi.stubGlobal(
+      "Intl",
+      Object.create(Intl, { Segmenter: { value: undefined } }),
+    );
+    vi.resetModules();
+    const { formatMetadataValue: format } = await import(
+      "../formatMetadataValue"
+    );
+    vi.unstubAllGlobals();
+
+    // A surrogate pair stays whole; a flag counts as its two code points.
+    expect(format(`${"a".repeat(78)}😀${"b".repeat(10)}`).text).toBe(
+      `${"a".repeat(78)}😀…`,
+    );
+    expect(format(`${"a".repeat(79)}🇯🇵`).text).toBe(`${"a".repeat(79)}…`);
   });
 
   it("renders script-like strings literally (AC9)", () => {

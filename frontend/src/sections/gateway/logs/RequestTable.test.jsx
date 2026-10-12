@@ -2,7 +2,12 @@ import React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, userEvent, within } from "src/utils/test-utils";
 import RequestTable from "./RequestTable";
-import { BUILTIN_COLUMNS, resolveColumns } from "./columns/columnModel";
+import {
+  BUILTIN_COLUMNS,
+  CUSTOM_COLUMN_TEXT_WIDTH,
+  CUSTOM_COLUMN_WIDTH,
+  resolveColumns,
+} from "./columns/columnModel";
 
 const mockState = {
   data: {
@@ -152,6 +157,31 @@ describe("RequestTable", () => {
     expect(
       within(screen.getByRole("table")).getByText('{"beta":false,"count":0}'),
     ).toBeInTheDocument();
+  });
+
+  it("keeps a custom header at the 140px column width as one ellipsized line with its full name on hover (R7-R12)", () => {
+    const name = `${"billing_reconciliation_".repeat(3)}acc`; // 72 characters
+    render(<RequestTable {...baseProps} columns={customColumns([name])} />);
+    const header = screen.getByRole("columnheader", { name });
+    expect(header).toHaveStyle({
+      width: `${CUSTOM_COLUMN_WIDTH}px`,
+      minWidth: `${CUSTOM_COLUMN_WIDTH}px`,
+    });
+    const label = within(header).getByText(name);
+    expect(label).toHaveAttribute("title", name);
+    expect(label).toHaveStyle({
+      maxWidth: `${CUSTOM_COLUMN_TEXT_WIDTH}px`,
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap",
+    });
+    // The label never widens the column past CUSTOM_COLUMN_WIDTH.
+    const { paddingLeft, paddingRight } = getComputedStyle(header);
+    expect(
+      CUSTOM_COLUMN_TEXT_WIDTH +
+        parseFloat(paddingLeft) +
+        parseFloat(paddingRight),
+    ).toBe(CUSTOM_COLUMN_WIDTH);
   });
 
   it("drives header, rows, skeleton and empty colSpan from the same column list (AC6)", () => {

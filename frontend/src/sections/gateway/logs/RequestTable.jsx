@@ -22,7 +22,10 @@ import Iconify from "src/components/iconify";
 import useRequestLogs from "./hooks/useRequestLogs";
 import { formatCost } from "../utils/formatters";
 import { REQUEST_TAG } from "../constants/requestTags";
-import { BUILTIN_COLUMNS } from "./columns/columnModel";
+import {
+  BUILTIN_COLUMNS,
+  CUSTOM_COLUMN_TEXT_WIDTH,
+} from "./columns/columnModel";
 import MetadataCell from "./columns/MetadataCell";
 
 // ---------------------------------------------------------------------------
@@ -383,10 +386,28 @@ const RequestTable = ({
               {columns.map((col) => (
                 <TableCell
                   key={col.id}
-                  sx={{ width: col.width, fontWeight: 600 }}
+                  sx={{
+                    width: col.width,
+                    // An overflowing auto-layout table shrinks columns below `width`.
+                    ...(col.kind === "metadata" && { minWidth: col.width }),
+                    fontWeight: 600,
+                  }}
                   data-column={col.id}
                 >
-                  {col.sortable ? (
+                  {col.kind === "metadata" ? (
+                    <Typography
+                      variant="inherit"
+                      component="span"
+                      noWrap
+                      title={col.label}
+                      sx={{
+                        display: "block",
+                        maxWidth: CUSTOM_COLUMN_TEXT_WIDTH,
+                      }}
+                    >
+                      {col.label}
+                    </Typography>
+                  ) : col.sortable ? (
                     <TableSortLabel
                       active={sortField === (fieldMap[col.key] || col.key)}
                       direction={

@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { forwardRef, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import PropTypes from "prop-types";
 import {
@@ -15,6 +15,7 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
+import { LoadingButton } from "@mui/lab";
 import { Link as RouterLink } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
@@ -25,11 +26,19 @@ import {
   customNameFromId,
 } from "./columnModel";
 
+const MOVE_HINT_ID = `${COLUMNS_POPOVER_ID}-move-hint`;
+
 function matches(label, query) {
   return label.toLowerCase().includes(query);
 }
 
-const ColumnEntryRow = ({ entry, onToggle, onMove, atCap = false }) => {
+const ColumnEntryRow = ({
+  entry,
+  onToggle,
+  onMove,
+  atCap = false,
+  searching = false,
+}) => {
   const upRef = useRef(null);
   const downRef = useRef(null);
   // At the cap a column not yet in the config cannot be added (toggleColumn).
@@ -108,7 +117,8 @@ const ColumnEntryRow = ({ entry, onToggle, onMove, atCap = false }) => {
             ref={upRef}
             size="small"
             aria-label={`Move ${entry.label} up`}
-            disabled={!entry.canMoveUp}
+            aria-describedby={searching ? MOVE_HINT_ID : undefined}
+            disabled={searching || !entry.canMoveUp}
             onClick={() => handleMove(-1)}
           >
             <Iconify icon="mdi:chevron-up" width={18} />
@@ -117,7 +127,8 @@ const ColumnEntryRow = ({ entry, onToggle, onMove, atCap = false }) => {
             ref={downRef}
             size="small"
             aria-label={`Move ${entry.label} down`}
-            disabled={!entry.canMoveDown}
+            aria-describedby={searching ? MOVE_HINT_ID : undefined}
+            disabled={searching || !entry.canMoveDown}
             onClick={() => handleMove(1)}
           >
             <Iconify icon="mdi:chevron-down" width={18} />
@@ -141,18 +152,22 @@ ColumnEntryRow.propTypes = {
   onToggle: PropTypes.func.isRequired,
   onMove: PropTypes.func.isRequired,
   atCap: PropTypes.bool,
+  searching: PropTypes.bool,
 };
 
-const GroupHeading = ({ children }) => (
+const GroupHeading = forwardRef(({ children, ...other }, ref) => (
   <Typography
+    ref={ref}
     variant="caption"
     color="text.secondary"
     sx={{ px: 1, pt: 1, pb: 0.5, display: "block", fontSize: "11px" }}
+    {...other}
   >
     {children}
   </Typography>
-);
+));
 
+GroupHeading.displayName = "GroupHeading";
 GroupHeading.propTypes = { children: PropTypes.node.isRequired };
 
 /**
@@ -170,6 +185,7 @@ const ColumnsPickerPopover = ({
   totalCount,
   atCap = false,
   declarationStatus,
+  declarationsFetching = false,
   reservedDeclared = false,
   unavailableCustomCount = 0,
   onToggle,
@@ -179,6 +195,9 @@ const ColumnsPickerPopover = ({
   onRetryDeclarations,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
+  const searchRef = useRef(null);
+  const customHeadingRef = useRef(null);
+  const removeButtons = useRef(new Map());
   const query = searchQuery.trim().toLowerCase();
   const showSearch = totalCount > PICKER_SEARCH_THRESHOLD;
 
@@ -196,6 +215,40 @@ const ColumnsPickerPopover = ({
         : entries.custom,
     [entries.custom, query],
   );
+  const filteredStale = useMemo(
+    () =>
+      query
+        ? stale.filter((id) => matches(customNameFromId(id) ?? id, query))
+        : stale,
+    [stale, query],
+  );
+  // A search that matches no loaded custom row hides that group; its loading
+  // and error rows stay, since unloaded properties might match.
+  const customFilteredOut =
+    Boolean(query) &&
+    declarationStatus === "success" &&
+    filteredCustom.length === 0;
+  const noMatches =
+    filteredBuiltin.length === 0 &&
+    customFilteredOut &&
+    filteredStale.length === 0;
+
+  // Keep focus on the next stale row, else the previous one, else the search,
+  // once the removed row unmounts (R39-R42).
+  const handleRemove = (id, index) => {
+    const nextId = filteredStale[index + 1] ?? filteredStale[index - 1];
+    flushSync(() => onRemove(id));
+    (removeButtons.current.get(nextId) ?? searchRef.current)?.focus();
+  };
+
+  // Keep Retry focus on a control that survives the successful reload. When a
+  // search hides every custom declaration, the group heading unmounts, so the
+  // search field is the stable focus target; otherwise the heading preserves
+  // the useful context while the error row becomes a loading row (R39-R42).
+  const handleRetry = () => {
+    (query ? searchRef.current : customHeadingRef.current)?.focus();
+    onRetryDeclarations();
+  };
 
   return (
     <Popover
@@ -203,25 +256,37 @@ const ColumnsPickerPopover = ({
       open={open}
       anchorEl={anchorEl}
       onClose={onClose}
+      // Stays mounted while closed: clear the search on every open, which
+      // (unlike on exit) also covers reopening mid-close.
+      onTransitionEnter={() => setSearchQuery("")}
       anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
       transformOrigin={{ vertical: -8, horizontal: "left" }}
       slotProps={{
         paper: {
           role: "dialog",
           "aria-label": "Choose columns",
-          sx: { p: 0, width: 320, maxHeight: 480, borderRadius: "8px" },
+          sx: {
+            p: 0,
+            width: 320,
+            borderRadius: "8px",
+            display: "flex",
+            flexDirection: "column",
+          },
         },
       }}
     >
-      <Box sx={{ display: "flex", flexDirection: "column" }}>
-        <Box
-          sx={{
-            position: "sticky",
-            top: 0,
-            zIndex: 10,
-            backgroundColor: "background.paper",
-          }}
-        >
+      {/* Only the column list scrolls, so the header and Reset never cover a
+          focused control. The paper keeps MUI's viewport limit; below 480px
+          this wrapper, and so the list, shrinks to fit it. */}
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          maxHeight: 480,
+          minHeight: 0,
+        }}
+      >
+        <Box>
           <Stack
             direction="row"
             alignItems="center"
@@ -240,9 +305,20 @@ const ColumnsPickerPopover = ({
                 fullWidth
                 placeholder="Search columns"
                 inputProps={{ "aria-label": "Search columns" }}
+                inputRef={searchRef}
                 searchQuery={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
+              {query && (
+                <Typography
+                  id={MOVE_HINT_ID}
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ display: "block", px: 0.5, pt: 0.5, fontSize: "11px" }}
+                >
+                  Clear the search to reorder columns.
+                </Typography>
+              )}
             </Box>
           )}
           <Typography
@@ -256,18 +332,39 @@ const ColumnsPickerPopover = ({
           <Divider />
         </Box>
 
-        <Box sx={{ p: 1, display: "flex", flexDirection: "column" }}>
-          <GroupHeading>Built-in</GroupHeading>
+        <Box
+          sx={{
+            p: 1,
+            display: "flex",
+            flexDirection: "column",
+            overflowY: "auto",
+          }}
+        >
+          {/* Always mounted, so screen readers announce the change. */}
+          <Typography
+            role="status"
+            variant="caption"
+            color="text.secondary"
+            sx={{ px: 1, py: noMatches ? 0.5 : 0, display: "block" }}
+          >
+            {noMatches && "No matching columns"}
+          </Typography>
+          {filteredBuiltin.length > 0 && <GroupHeading>Built-in</GroupHeading>}
           {filteredBuiltin.map((entry) => (
             <ColumnEntryRow
               key={entry.id}
               entry={entry}
               onToggle={onToggle}
               onMove={onMove}
+              searching={Boolean(query)}
             />
           ))}
 
-          <GroupHeading>Custom properties</GroupHeading>
+          {!customFilteredOut && (
+            <GroupHeading ref={customHeadingRef} tabIndex={-1}>
+              Custom properties
+            </GroupHeading>
+          )}
           {declarationStatus === "pending" && (
             <Stack
               direction="row"
@@ -290,14 +387,15 @@ const ColumnsPickerPopover = ({
               severity="error"
               sx={{ mx: 1, my: 0.5 }}
               action={
-                <Button
+                <LoadingButton
                   color="inherit"
                   size="small"
                   aria-label="Retry loading custom properties"
-                  onClick={onRetryDeclarations}
+                  loading={declarationsFetching}
+                  onClick={handleRetry}
                 >
                   Retry
-                </Button>
+                </LoadingButton>
               }
             >
               Couldn&apos;t load custom properties.
@@ -307,24 +405,26 @@ const ColumnsPickerPopover = ({
                 } unavailable.`}
             </Alert>
           )}
-          {declarationStatus === "success" && entries.custom.length === 0 && (
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ px: 1, py: 0.5, display: "block" }}
-            >
-              {reservedDeclared
-                ? "No other custom properties declared (Application and Service are already built-in columns)."
-                : "No custom properties declared."}{" "}
-              <Link
-                component={RouterLink}
-                to={paths.dashboard.gateway.customProperties}
+          {declarationStatus === "success" &&
+            entries.custom.length === 0 &&
+            !customFilteredOut && (
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ px: 1, py: 0.5, display: "block" }}
               >
-                Declare one in Custom Properties
-              </Link>
-            </Typography>
-          )}
-          {declarationStatus === "success" && atCap && (
+                {reservedDeclared
+                  ? "No other custom properties declared (Application and Service are already built-in columns)."
+                  : "No custom properties declared."}{" "}
+                <Link
+                  component={RouterLink}
+                  to={paths.dashboard.gateway.customProperties}
+                >
+                  Declare one in Custom Properties
+                </Link>
+              </Typography>
+            )}
+          {declarationStatus === "success" && atCap && !customFilteredOut && (
             <Typography
               variant="caption"
               color="text.secondary"
@@ -341,13 +441,14 @@ const ColumnsPickerPopover = ({
                 onToggle={onToggle}
                 onMove={onMove}
                 atCap={atCap}
+                searching={Boolean(query)}
               />
             ))}
 
-          {stale.length > 0 && (
+          {filteredStale.length > 0 && (
             <>
               <GroupHeading>No longer declared</GroupHeading>
-              {stale.map((id) => {
+              {filteredStale.map((id, index) => {
                 const name = customNameFromId(id) ?? id;
                 return (
                   <Stack
@@ -366,9 +467,13 @@ const ColumnsPickerPopover = ({
                       {name}
                     </Typography>
                     <IconButton
+                      ref={(el) => {
+                        if (el) removeButtons.current.set(id, el);
+                        else removeButtons.current.delete(id);
+                      }}
                       size="small"
                       aria-label={`Remove ${name}`}
-                      onClick={() => onRemove(id)}
+                      onClick={() => handleRemove(id, index)}
                     >
                       <Iconify icon="mdi:close-circle-outline" width={18} />
                     </IconButton>
@@ -404,6 +509,7 @@ ColumnsPickerPopover.propTypes = {
   atCap: PropTypes.bool,
   declarationStatus: PropTypes.oneOf(["pending", "error", "success"])
     .isRequired,
+  declarationsFetching: PropTypes.bool,
   reservedDeclared: PropTypes.bool,
   unavailableCustomCount: PropTypes.number,
   onToggle: PropTypes.func.isRequired,

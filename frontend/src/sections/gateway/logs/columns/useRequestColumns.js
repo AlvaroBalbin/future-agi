@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { enqueueSnackbar } from "notistack";
 import { useAuthContext } from "src/auth/hooks/use-auth-context";
 import { useOrganization } from "src/contexts/OrganizationContext";
@@ -61,6 +61,21 @@ export default function useRequestColumns({ enabled = true } = {}) {
 
   const config =
     edits && edits.key === storageKey ? edits.config : stored || DEFAULT_CONFIG;
+
+  // Another tab saved or reset this layout: adopt it in place of this tab's
+  // edits, so the latest save wins and the next edit here does not drop it.
+  useEffect(() => {
+    if (!storageKey) return undefined;
+    const handleStorage = (event) => {
+      if (event.key !== storageKey) return;
+      setEdits({
+        key: storageKey,
+        config: readConfig(storageKey).config || DEFAULT_CONFIG,
+      });
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [storageKey]);
 
   const declarationStatus = declarationsQuery.status;
   const declarations = useMemo(() => {
@@ -144,6 +159,7 @@ export default function useRequestColumns({ enabled = true } = {}) {
     config,
     storageKey,
     declarationStatus,
+    declarationsFetching: declarationsQuery.isFetching,
     reservedDeclared: resolved.reservedDeclared,
     unavailableCustomCount,
     toggle,

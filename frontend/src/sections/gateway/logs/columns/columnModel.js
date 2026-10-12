@@ -11,6 +11,9 @@ export const CONFIG_VERSION = 1;
 export const COLUMN_VIEW_ID = "requests";
 export const MAX_COLUMN_ENTRIES = 64;
 export const CUSTOM_COLUMN_WIDTH = 140;
+// Custom header and cell text is capped at the column width less the small
+// TableCell's 16px side padding, so the column stays CUSTOM_COLUMN_WIDTH wide.
+export const CUSTOM_COLUMN_TEXT_WIDTH = CUSTOM_COLUMN_WIDTH - 2 * 16;
 export const PICKER_SEARCH_THRESHOLD = 8;
 export const COLUMNS_POPOVER_ID = "request-columns-popover";
 

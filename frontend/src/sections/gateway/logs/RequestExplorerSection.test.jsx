@@ -12,6 +12,7 @@ const columnsState = {
   atCap: false,
   storageKey: "agentcc.requestLogs.columns.v1:user-a:org-1:requests",
   declarationStatus: "success",
+  declarationsFetching: false,
   reservedDeclared: false,
   unavailableCustomCount: 0,
   toggle: vi.fn(),
@@ -85,6 +86,21 @@ describe("RequestExplorerSection columns control", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(mockUseRequestColumns).toHaveBeenCalledWith({ enabled: false });
     expect(mockUseRequestColumns).not.toHaveBeenCalledWith({ enabled: true });
+  });
+
+  it("passes the declaration refetch state to the picker's Retry (AC18)", async () => {
+    const user = userEvent.setup();
+    mockUseRequestColumns.mockReturnValue({
+      ...columnsState,
+      declarationStatus: "error",
+      declarationsFetching: true,
+    });
+    window.history.pushState({}, "", "/dashboard/gateway/logs");
+    render(<RequestExplorerSection />);
+    await user.click(screen.getByRole("button", { name: "Columns" }));
+    expect(
+      screen.getByRole("button", { name: "Retry loading custom properties" }),
+    ).toBeDisabled();
   });
 
   it("keeps the Columns button disabled until the preference key is known (J4)", () => {

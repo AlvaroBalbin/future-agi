@@ -8,6 +8,7 @@ const orgState = { currentOrganizationId: "org-1", isReady: true };
 const declarationsState = {
   data: [{ name: "tenant", organization: "org-1" }],
   status: "success",
+  isFetching: false,
   refetch: vi.fn(),
 };
 
@@ -79,6 +80,7 @@ describe("useRequestColumns", () => {
     orgState.isReady = true;
     declarationsState.data = [{ name: "tenant", organization: "org-1" }];
     declarationsState.status = "success";
+    declarationsState.isFetching = false;
     declarationsState.refetch = vi.fn();
     mockUseCustomProperties.mockReset();
     mockUseCustomProperties.mockReturnValue(declarationsState);
@@ -159,6 +161,40 @@ describe("useRequestColumns", () => {
     act(() => result.current.reset());
     expect(result.current.config).toEqual(DEFAULT_CONFIG);
     expect(storage.getItem(KEY_A)).toBeNull();
+  });
+
+  it("adopts the layout another tab saves for the same key, so this tab's next edit keeps it", () => {
+    const { result } = renderHook(() => useRequestColumns());
+    act(() => result.current.toggle("builtin:provider"));
+    const otherTab = JSON.stringify({
+      v: 1,
+      columns: [...DEFAULT_CONFIG.columns, { id: "metadata:tenant" }],
+      hidden: [],
+    });
+    const saveInOtherTab = (key, value) => {
+      if (value === null) storage.removeItem(key);
+      else storage.setItem(key, value);
+      act(() => {
+        window.dispatchEvent(
+          new StorageEvent("storage", { key, newValue: value }),
+        );
+      });
+    };
+
+    saveInOtherTab(KEY_B, otherTab);
+    expect(labels(result)).not.toContain("Provider");
+
+    saveInOtherTab(KEY_A, otherTab);
+    expect(labels(result)).toEqual([...DEFAULT_LABELS, "tenant"]);
+    act(() => result.current.toggle("builtin:service"));
+    expect(JSON.parse(storage.getItem(KEY_A))).toEqual({
+      v: 1,
+      columns: [...DEFAULT_CONFIG.columns, { id: "metadata:tenant" }],
+      hidden: ["builtin:service"],
+    });
+
+    saveInOtherTab(KEY_A, null);
+    expect(result.current.config).toEqual(DEFAULT_CONFIG);
   });
 
   it("restores a stored config on mount for the same identity (AC3)", () => {
@@ -364,6 +400,10 @@ describe("useRequestColumns", () => {
 
     act(() => result.current.retryDeclarations());
     expect(declarationsState.refetch).toHaveBeenCalledTimes(1);
+    expect(result.current.declarationsFetching).toBe(false);
+    declarationsState.isFetching = true;
+    rerender();
+    expect(result.current.declarationsFetching).toBe(true);
 
     declarationsState.status = "success";
     declarationsState.data = [{ name: "tenant", organization: "org-1" }];

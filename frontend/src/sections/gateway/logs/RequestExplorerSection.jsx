@@ -298,6 +298,7 @@ const RequestExplorerSection = () => {
           totalCount={requestColumns.totalCount}
           atCap={requestColumns.atCap}
           declarationStatus={requestColumns.declarationStatus}
+          declarationsFetching={requestColumns.declarationsFetching}
           reservedDeclared={requestColumns.reservedDeclared}
           unavailableCustomCount={requestColumns.unavailableCustomCount}
           onToggle={requestColumns.toggle}

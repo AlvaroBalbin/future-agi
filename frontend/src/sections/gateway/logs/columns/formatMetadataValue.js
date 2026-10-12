@@ -6,11 +6,38 @@
 export const PREVIEW_LIMIT = 80;
 export const TOOLTIP_LIMIT = 2000;
 export const EMPTY_TEXT = "-";
-const TRUNCATED_SUFFIX = " [truncated]";
+// Leads the tooltip, so a scrolled tooltip still shows it (AC8).
+const TRUNCATED_PREFIX = "[truncated] ";
 const ELLIPSIS = "…";
-
 // eslint-disable-next-line no-control-regex
 const CONTROL_RE = /[\u0000-\u001F\u007F\u2028\u2029]+/g;
+
+const graphemeSegmenter =
+  typeof Intl.Segmenter === "function"
+    ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+    : null;
+
+// Grapheme clusters keep flags and ZWJ emoji whole; without Intl.Segmenter,
+// code points still never split a surrogate pair.
+function* graphemeClusters(text) {
+  if (!graphemeSegmenter) {
+    yield* text;
+    return;
+  }
+  for (const { segment } of graphemeSegmenter.segment(text)) yield segment;
+}
+
+// Return the first `limit` clusters when `text` has more than that; otherwise
+// return null. Iteration stops after the extra cluster, so oversized clusters
+// are preserved without turning the logical limit into a UTF-16 limit.
+function headIfLonger(text, limit) {
+  const head = [];
+  for (const cluster of graphemeClusters(text)) {
+    if (head.length === limit) return head;
+    head.push(cluster);
+  }
+  return null;
+}
 
 function stringify(value) {
   if (typeof value === "string") return value;
@@ -40,24 +67,19 @@ export function formatMetadataValue(value) {
     return { text: EMPTY_TEXT, full: null, truncated: false };
   }
 
-  // Limits count code points, so a cut never splits a surrogate pair. Only the
-  // first TOOLTIP_LIMIT + 1 are needed to apply both limits.
-  const chars = [];
-  for (const char of collapsed) {
-    if (chars.length > TOOLTIP_LIMIT) break;
-    chars.push(char);
-  }
-
+  // Limits count grapheme clusters, so a cut never splits a character.
   let text = collapsed;
   let full = collapsed;
   let truncated = false;
 
-  if (chars.length > PREVIEW_LIMIT) {
-    text = `${chars.slice(0, PREVIEW_LIMIT - 1).join("")}${ELLIPSIS}`;
+  const previewHead = headIfLonger(collapsed, PREVIEW_LIMIT);
+  if (previewHead) {
+    text = `${previewHead.slice(0, PREVIEW_LIMIT - 1).join("")}${ELLIPSIS}`;
     truncated = true;
   }
-  if (chars.length > TOOLTIP_LIMIT) {
-    full = `${chars.slice(0, TOOLTIP_LIMIT).join("")}${TRUNCATED_SUFFIX}`;
+  const tooltipHead = headIfLonger(collapsed, TOOLTIP_LIMIT);
+  if (tooltipHead) {
+    full = `${TRUNCATED_PREFIX}${tooltipHead.join("")}`;
     truncated = true;
   }
 
