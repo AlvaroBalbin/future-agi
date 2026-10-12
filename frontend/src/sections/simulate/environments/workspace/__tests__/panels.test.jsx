@@ -208,6 +208,24 @@ describe("WorkspacePanels", () => {
     expect(screen.getByText(/No evaluations added/)).toBeInTheDocument();
   });
 
+  it("explains a tab on hover instead of repeating it as a heading", async () => {
+    const user = userEvent.setup();
+    renderPanels();
+    await user.hover(screen.getByText("Contract"));
+    expect(await screen.findByText(/What this environment is made of/)).toBeInTheDocument();
+  });
+
+  it("keeps the gap list in the tooltip alongside the tab's explanation", async () => {
+    const user = userEvent.setup();
+    renderPanels({
+      gapsByTab: { evals: [{ id: "no-evals", title: "No evaluations added" }] },
+      counts: { scenarios: 2, evals: 0 },
+    });
+    await user.hover(screen.getByText("Evaluations"));
+    expect(await screen.findByText(/These decide whether each task passed/)).toBeInTheDocument();
+    expect(screen.getByText("Needs your input before you can run:")).toBeInTheDocument();
+  });
+
   it("falls back to the Overview body for an unknown tab", () => {
     renderPanels({ tab: "not-a-tab" });
     expect(screen.getByText(/^overview-body:/)).toBeInTheDocument();
