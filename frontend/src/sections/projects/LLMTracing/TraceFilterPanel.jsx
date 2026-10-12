@@ -3023,6 +3023,44 @@ const boundExactValueSearchInput = (value, maxUtf8Bytes) =>
 const pickerValueKey = (value, storageType) =>
   getPickerValueIdentity(value, storageType);
 
+// A one-line value label that names itself in full on hover, but only when the
+// line actually cuts it off. The check runs as the pointer arrives, since the
+// width depends on the panel; a label that fits gets no tooltip.
+function TruncatedValueLabel({ text, sx }) {
+  const ref = useRef(null);
+  const [cutOff, setCutOff] = useState(false);
+  const measure = () => {
+    const el = ref.current;
+    setCutOff(!!el && el.scrollWidth > el.clientWidth);
+  };
+  return (
+    <CustomTooltip
+      show
+      arrow
+      size="small"
+      placement="top-start"
+      enterDelay={300}
+      title={
+        cutOff ? (
+          <Box sx={{ wordBreak: "break-all", whiteSpace: "pre-wrap" }}>
+            {text}
+          </Box>
+        ) : (
+          ""
+        )
+      }
+    >
+      <Typography ref={ref} noWrap onMouseEnter={measure} sx={sx}>
+        {text}
+      </Typography>
+    </CustomTooltip>
+  );
+}
+TruncatedValueLabel.propTypes = {
+  text: PropTypes.string,
+  sx: PropTypes.object,
+};
+
 function ValuePicker({
   propertyId,
   propertyCategory,
@@ -3616,25 +3654,19 @@ function ValuePicker({
                   }}
                 />
                 <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography
-                    noWrap
-                    title={label}
+                  <TruncatedValueLabel
+                    text={label}
                     sx={{
                       fontSize: 12,
                       fontWeight: isSelected ? 600 : 400,
                       color: "text.primary",
                     }}
-                  >
-                    {label}
-                  </Typography>
+                  />
                   {secondaryLabel && (
-                    <Typography
-                      noWrap
-                      title={secondaryLabel}
+                    <TruncatedValueLabel
+                      text={secondaryLabel}
                       sx={{ fontSize: 10, color: "text.secondary", mt: 0.1 }}
-                    >
-                      {secondaryLabel}
-                    </Typography>
+                    />
                   )}
                 </Box>
               </Box>

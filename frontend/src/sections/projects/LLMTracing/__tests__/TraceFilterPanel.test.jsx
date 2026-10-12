@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import PropTypes from "prop-types";
-import { act, fireEvent, render, screen, waitFor } from "src/utils/test-utils";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "src/utils/test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   buildApiFilterFromPanelRow,
@@ -3927,6 +3934,58 @@ describe("voice-call property search aliases", () => {
       document.querySelector('[data-filter-value-option="ended"]'),
     ).not.toBeInTheDocument();
     expect(screen.getAllByText("completed").length).toBeGreaterThan(0);
+
+    document.body.removeChild(anchorEl);
+  });
+
+  it("shows a cut-off value's full name on hover, and no tooltip for one that fits", async () => {
+    const long = "dfd8e932-aadf-4f7b-8f4d-5f97c7dabfd8-deep-research-agent";
+    dashboardFilterValuesMock.mockReturnValue({
+      ...defaultDashboardFilterValues(),
+      data: [
+        { value: long, label: long },
+        { value: "ended", label: "ended" },
+      ],
+    });
+    const { anchorEl } = renderPanel({
+      properties,
+      currentFilters: [
+        {
+          field: "agent_name",
+          fieldName: "agent_name",
+          fieldCategory: "attribute",
+          fieldType: "string",
+          apiColType: "SPAN_ATTRIBUTE",
+          operator: "in",
+          value: [],
+        },
+      ],
+      projectId: "project-1",
+    });
+    fireEvent.click(
+      document.querySelector('[data-filter-value-trigger="agent_name"]'),
+    );
+
+    // jsdom has no layout; give the long label the box of a clipped line.
+    const longLabel = within(
+      document.querySelector(`[data-filter-value-option="${long}"]`),
+    ).getByText(long);
+    Object.defineProperty(longLabel, "scrollWidth", { value: 420 });
+    Object.defineProperty(longLabel, "clientWidth", { value: 220 });
+    fireEvent.mouseOver(longLabel);
+    fireEvent.mouseEnter(longLabel);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(long);
+    fireEvent.mouseLeave(longLabel);
+    fireEvent.mouseOut(longLabel);
+    await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+
+    const shortLabel = within(
+      document.querySelector('[data-filter-value-option="ended"]'),
+    ).getByText("ended");
+    fireEvent.mouseOver(shortLabel);
+    fireEvent.mouseEnter(shortLabel);
+    await new Promise((r) => setTimeout(r, 400));
+    expect(screen.queryByRole("tooltip")).toBeNull();
 
     document.body.removeChild(anchorEl);
   });
