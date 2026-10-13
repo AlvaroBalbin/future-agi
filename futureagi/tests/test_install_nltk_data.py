@@ -114,7 +114,15 @@ def test_full_profile_carries_the_omw_the_installed_nltk_resolves() -> None:
     """
     from nltk.corpus import wordnet as wordnet_module
 
-    omw_name = wordnet_module._omw_reader.__name__
+    # wordnet_module._omw_reader forces nltk to fully construct the real
+    # WordNetCorpusReader, which requires the wordnet corpus already present
+    # on disk -- exactly the install this test is supposed to verify, not
+    # assume. The omw reader name is a static constant nltk wires in via an
+    # unloaded LazyCorpusLoader (nltk/corpus/__init__.py); read that directly
+    # so this test doesn't depend on another test (or the local machine)
+    # having already pulled the corpus down.
+    omw_loader = wordnet_module._LazyCorpusLoader__args[0]
+    omw_name = omw_loader.__name__
     assert f"corpora/{omw_name}" in install_nltk_data.selected_packages("full")
 
 

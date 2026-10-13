@@ -176,7 +176,14 @@ async def test_streamable_http_rejects_a_request_body_over_the_configured_limit(
     token, _ = await sync_to_async(generate_oauth_token)(
         user.id, user.organization_id, None, "test-client", "context", expires_in=3600
     )
-    oversized = _initialize_payload(settings.DATA_UPLOAD_MAX_MEMORY_SIZE + 1024)
+    # A real body past the production 1 GiB ceiling would allocate multiple
+    # GiB at peak (the JSON string, then its encoded bytes) just to prove a
+    # boundary check -- fragile on a small CI/local worker. Override the
+    # ceiling to a few KiB for this test only; the rejection path doesn't
+    # care how large the real limit is, only that something over it 413s.
+    small_limit = 4096
+    monkeypatch.setattr(settings, "DATA_UPLOAD_MAX_MEMORY_SIZE", small_limit)
+    oversized = _initialize_payload(small_limit + 1024)
 
     monkeypatch.setattr(mcp_app, "_streamable_app", None)
     monkeypatch.setattr(mcp_app, "_session_manager", None)
