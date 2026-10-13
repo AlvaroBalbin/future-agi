@@ -168,7 +168,8 @@ describe("RequestTable", () => {
       minWidth: `${CUSTOM_COLUMN_WIDTH}px`,
     });
     const label = within(header).getByText(name);
-    expect(label).toHaveAttribute("title", name);
+    expect(label).toHaveAttribute("aria-label", name);
+    expect(label).toHaveAttribute("tabindex", "0");
     expect(label).toHaveStyle({
       maxWidth: `${CUSTOM_COLUMN_TEXT_WIDTH}px`,
       overflow: "hidden",

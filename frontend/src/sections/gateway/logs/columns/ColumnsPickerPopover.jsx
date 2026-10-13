@@ -13,6 +13,7 @@ import {
   Link,
   Popover,
   Stack,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
@@ -90,25 +91,28 @@ const ColumnEntryRow = ({
           />
         }
         label={
-          <Typography
-            variant="body2"
-            noWrap
-            sx={{ fontSize: "13px", ml: 0.5 }}
-            title={entry.label}
-          >
-            {entry.label}
-            {entry.locked && (
-              <Iconify
-                icon="mdi:lock-outline"
-                width={12}
-                sx={{
-                  ml: 0.5,
-                  verticalAlign: "text-bottom",
-                  color: "text.disabled",
-                }}
-              />
-            )}
-          </Typography>
+          <Tooltip title={entry.label} arrow placement="left" describeChild>
+            <Typography
+              variant="body2"
+              noWrap
+              tabIndex={0}
+              sx={{ fontSize: "13px", ml: 0.5 }}
+              aria-label={entry.label}
+            >
+              {entry.label}
+              {entry.locked && (
+                <Iconify
+                  icon="mdi:lock-outline"
+                  width={12}
+                  sx={{
+                    ml: 0.5,
+                    verticalAlign: "text-bottom",
+                    color: "text.disabled",
+                  }}
+                />
+              )}
+            </Typography>
+          </Tooltip>
         }
       />
       {!entry.locked && (
@@ -458,14 +462,17 @@ const ColumnsPickerPopover = ({
                     justifyContent="space-between"
                     sx={{ px: 1, py: 0.25 }}
                   >
-                    <Typography
-                      variant="body2"
-                      noWrap
-                      sx={{ fontSize: "13px", color: "text.disabled" }}
-                      title={name}
-                    >
-                      {name}
-                    </Typography>
+                    <Tooltip title={name} arrow placement="left" describeChild>
+                      <Typography
+                        variant="body2"
+                        noWrap
+                        tabIndex={0}
+                        sx={{ fontSize: "13px", color: "text.disabled" }}
+                        aria-label={name}
+                      >
+                        {name}
+                      </Typography>
+                    </Tooltip>
                     <IconButton
                       ref={(el) => {
                         if (el) removeButtons.current.set(id, el);

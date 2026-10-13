@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { formatMetadataValue, readMetadataValue } from "../formatMetadataValue";
+import {
+  formatMetadataValue,
+  MAX_VALUE_UTF16_LENGTH,
+  PREVIEW_UTF16_LIMIT,
+  readMetadataValue,
+} from "../formatMetadataValue";
 
 describe("formatMetadataValue (R17-R24, AC7, AC8)", () => {
   it.each([
@@ -54,24 +59,30 @@ describe("formatMetadataValue (R17-R24, AC7, AC8)", () => {
   });
 
   it("uses logical grapheme limits even when clusters exceed the UTF-16 budget", () => {
-    // Combining marks stack without limit, so a cluster has no size bound.
+    // The raw ceiling bounds pathological clusters while ordinary values keep
+    // their grapheme-based limits.
     const fat = `a${"\u0301".repeat(200)}`; // 201 UTF-16 units
     const preview = formatMetadataValue(fat.repeat(100));
-    expect(preview.text).toBe(`${fat.repeat(79)}…`);
+    expect(preview.text.length).toBeLessThanOrEqual(PREVIEW_UTF16_LIMIT);
     expect(preview.truncated).toBe(true);
 
     const mark = `a${"\u0301".repeat(50)}`; // 51 UTF-16 units
     const tooltip = formatMetadataValue(mark.repeat(3000));
-    expect(tooltip.full).toBe(`[truncated] ${mark.repeat(2000)}`);
+    expect(tooltip.full).toHaveLength(
+      "[truncated] ".length + MAX_VALUE_UTF16_LENGTH,
+    );
+    expect(tooltip.full.startsWith("[truncated] ")).toBe(true);
   });
 
-  it("preserves a single oversized grapheme instead of discarding the whole value", () => {
+  it("caps a single oversized grapheme at code-point boundaries", () => {
     const value = `a${String.fromCharCode(0x0301).repeat(9000)}`;
-    expect(formatMetadataValue(value)).toEqual({
-      text: value,
-      full: value,
-      truncated: false,
-    });
+    const result = formatMetadataValue(value);
+    expect(result.text.length).toBeLessThanOrEqual(PREVIEW_UTF16_LIMIT);
+    expect(result.full).toHaveLength(
+      "[truncated] ".length + MAX_VALUE_UTF16_LENGTH,
+    );
+    expect(result.full.startsWith("[truncated] a")).toBe(true);
+    expect(result.truncated).toBe(true);
   });
 
   it.each([

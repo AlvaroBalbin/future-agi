@@ -395,18 +395,26 @@ const RequestTable = ({
                   data-column={col.id}
                 >
                   {col.kind === "metadata" ? (
-                    <Typography
-                      variant="inherit"
-                      component="span"
-                      noWrap
+                    <Tooltip
                       title={col.label}
-                      sx={{
-                        display: "block",
-                        maxWidth: CUSTOM_COLUMN_TEXT_WIDTH,
-                      }}
+                      arrow
+                      placement="top"
+                      describeChild
                     >
-                      {col.label}
-                    </Typography>
+                      <Typography
+                        variant="inherit"
+                        component="span"
+                        noWrap
+                        tabIndex={0}
+                        aria-label={col.label}
+                        sx={{
+                          display: "block",
+                          maxWidth: CUSTOM_COLUMN_TEXT_WIDTH,
+                        }}
+                      >
+                        {col.label}
+                      </Typography>
+                    </Tooltip>
                   ) : col.sortable ? (
                     <TableSortLabel
                       active={sortField === (fieldMap[col.key] || col.key)}
