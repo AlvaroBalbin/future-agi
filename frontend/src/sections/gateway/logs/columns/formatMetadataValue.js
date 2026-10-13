@@ -1,8 +1,10 @@
-// Plain-text formatting for custom metadata cells (R17-R24).
+// Plain-text formatting for custom metadata cells.
 //
 // Output is always a JS string placed as a React text child. No HTML, Markdown,
 // link detection or regex evaluation happens here or in the cell.
 
+// CSS usually clips first, but does not shorten DOM text. This separate limit
+// bounds every cell's text while preserving ordinary grapheme boundaries.
 export const PREVIEW_LIMIT = 80;
 export const TOOLTIP_LIMIT = 2000;
 // Keep pathological single grapheme clusters from bypassing the display
@@ -11,7 +13,7 @@ export const TOOLTIP_LIMIT = 2000;
 export const PREVIEW_UTF16_LIMIT = 512;
 export const MAX_VALUE_UTF16_LENGTH = 4096;
 export const EMPTY_TEXT = "-";
-// Leads the tooltip, so a scrolled tooltip still shows it (AC8).
+// Leads the tooltip, so a scrolled tooltip still shows it.
 const TRUNCATED_PREFIX = "[truncated] ";
 const ELLIPSIS = "…";
 // eslint-disable-next-line no-control-regex
@@ -129,7 +131,7 @@ export function formatMetadataValue(value) {
 
 /**
  * Read exactly `metadata[name]` as an own property of a plain object. No
- * prototype walk, no nested-path interpretation (R9/AC9).
+ * prototype walk, no nested-path interpretation.
  */
 export function readMetadataValue(metadata, name) {
   if (Object.prototype.toString.call(metadata) !== "[object Object]") {

@@ -27,14 +27,14 @@ function identitySegment(value) {
 }
 
 /**
- * Column preferences for the Request Logs table (TH-7041).
+ * Column preferences for the Request Logs table.
  *
  * - identity: authenticated user id + current organization id; storage is not
- *   consulted until both are known (J4).
- * - declarations: the existing org-scoped `useCustomProperties()` query, run
- *   only while `enabled`; custom columns render only while it is successful
- *   and the picker's Retry row reports its failure (J6).
- * - persistence: browser localStorage, ids only (R13-R16).
+ *   consulted until both are known.
+ * - declarations: use the current organization's loaded query data, including
+ *   cached data during a failed refresh. The picker's Retry row still reports
+ *   the query error; an initial failure never exposes saved custom names.
+ * - persistence: browser localStorage, ids only.
  */
 export default function useRequestColumns({ enabled = true } = {}) {
   const { user } = useAuthContext();
@@ -52,7 +52,7 @@ export default function useRequestColumns({ enabled = true } = {}) {
   );
 
   // Read synchronously when the key changes so no render ever shows another
-  // identity's configuration (AC4). Edits are tracked per key in state.
+  // identity's configuration. Edits are tracked per key in state.
   const stored = useMemo(
     () => (storageKey ? readConfig(storageKey).config : null),
     [storageKey],
@@ -78,11 +78,15 @@ export default function useRequestColumns({ enabled = true } = {}) {
   }, [storageKey]);
 
   const declarationStatus = declarationsQuery.status;
+  const declarationsAvailable =
+    Boolean(isReady && orgId) &&
+    Array.isArray(declarationsQuery.data) &&
+    !declarationsQuery.isPlaceholderData;
   const declarations = useMemo(() => {
     const items = Array.isArray(declarationsQuery?.data)
       ? declarationsQuery.data
       : [];
-    // Defensive org filter: never offer another organization's names (R31).
+    // Defensive org filter: never offer another organization's names.
     return items.filter(
       (item) =>
         item &&
@@ -97,17 +101,17 @@ export default function useRequestColumns({ enabled = true } = {}) {
       resolveColumns({
         config,
         declarations,
-        status: orgId ? declarationStatus : "pending",
+        status: declarationsAvailable ? "success" : "pending",
       }),
-    [config, declarations, declarationStatus, orgId],
+    [config, declarations, declarationsAvailable],
   );
 
   const unavailableCustomCount = useMemo(
     () =>
-      declarationStatus === "success"
+      declarationsAvailable
         ? 0
         : config.columns.filter((c) => isCustomColumnId(c.id)).length,
-    [config, declarationStatus],
+    [config, declarationsAvailable],
   );
 
   const commit = useCallback(
@@ -159,6 +163,7 @@ export default function useRequestColumns({ enabled = true } = {}) {
     config,
     storageKey,
     declarationStatus,
+    declarationsAvailable,
     declarationsFetching: declarationsQuery.isFetching,
     reservedDeclared: resolved.reservedDeclared,
     unavailableCustomCount,

@@ -1,4 +1,4 @@
-// localStorage adapter for Request Logs column preferences (R13-R16).
+// localStorage adapter for Request Logs column preferences.
 //
 // One key per authenticated user + organization + view. The adapter never
 // enumerates keys, never falls back to another identity's key and never
@@ -37,7 +37,7 @@ function getStorage() {
 /**
  * @returns {{ ok: boolean, config: object|null, reason?: string }}
  *   `config` is null for an absent or rejected record; a rejected record is
- *   left untouched in storage (AC12).
+ *   left untouched in storage.
  */
 export function readConfig(key) {
   if (!key) return { ok: false, config: null, reason: "no-key" };

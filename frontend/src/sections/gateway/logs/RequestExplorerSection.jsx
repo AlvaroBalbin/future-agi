@@ -92,7 +92,7 @@ const RequestExplorerSection = () => {
   // --- View tab -------------------------------------------------------------
   const currentView = filters.view || "requests";
 
-  // --- Configurable columns (TH-7041) --------------------------------------
+  // --- Configurable columns --------------------------------------
   const requestColumns = useRequestColumns({
     enabled: currentView === "requests",
   });
@@ -275,7 +275,7 @@ const RequestExplorerSection = () => {
             variant="outlined"
             startIcon={<Iconify icon="mdi:view-column-outline" width={20} />}
             onClick={(event) => setColumnsAnchor(event.currentTarget)}
-            // Edits need the user/org storage key to be saved (J4).
+            // Edits need the user/org storage key to be saved.
             disabled={!requestColumns.storageKey}
             aria-haspopup="dialog"
             aria-expanded={Boolean(columnsAnchor)}
@@ -298,6 +298,7 @@ const RequestExplorerSection = () => {
           totalCount={requestColumns.totalCount}
           atCap={requestColumns.atCap}
           declarationStatus={requestColumns.declarationStatus}
+          declarationsAvailable={requestColumns.declarationsAvailable}
           declarationsFetching={requestColumns.declarationsFetching}
           reservedDeclared={requestColumns.reservedDeclared}
           unavailableCustomCount={requestColumns.unavailableCustomCount}

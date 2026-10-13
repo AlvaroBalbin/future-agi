@@ -13,7 +13,6 @@ import {
   Link,
   Popover,
   Stack,
-  Tooltip,
   Typography,
 } from "@mui/material";
 import { LoadingButton } from "@mui/lab";
@@ -21,11 +20,8 @@ import { Link as RouterLink } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { paths } from "src/routes/paths";
-import {
-  COLUMNS_POPOVER_ID,
-  PICKER_SEARCH_THRESHOLD,
-  customNameFromId,
-} from "./columnModel";
+import { COLUMNS_POPOVER_ID, customNameFromId } from "./columnModel";
+import ClippedColumnLabel from "./ClippedColumnLabel";
 
 const MOVE_HINT_ID = `${COLUMNS_POPOVER_ID}-move-hint`;
 
@@ -46,8 +42,7 @@ const ColumnEntryRow = ({
   const disabled = entry.locked || (atCap && !entry.inConfig);
 
   // Keep focus on this column's arrow after the move commits; once the column
-  // reaches the end of its group that arrow is disabled, so use the other
-  // (R39-R42).
+  // reaches the end of its group that arrow is disabled, so use the other.
   const handleMove = (delta) => {
     flushSync(() => onMove(entry.id, delta));
     const [pressed, opposite] = delta < 0 ? [upRef, downRef] : [downRef, upRef];
@@ -67,6 +62,7 @@ const ColumnEntryRow = ({
       }}
     >
       <FormControlLabel
+        disableTypography
         sx={{ mx: 0, flex: 1, minWidth: 0 }}
         control={
           <Checkbox
@@ -91,28 +87,22 @@ const ColumnEntryRow = ({
           />
         }
         label={
-          <Tooltip title={entry.label} arrow placement="left" describeChild>
-            <Typography
-              variant="body2"
-              noWrap
-              tabIndex={0}
-              sx={{ fontSize: "13px", ml: 0.5 }}
-              aria-label={entry.label}
-            >
-              {entry.label}
-              {entry.locked && (
-                <Iconify
-                  icon="mdi:lock-outline"
-                  width={12}
-                  sx={{
-                    ml: 0.5,
-                    verticalAlign: "text-bottom",
-                    color: "text.disabled",
-                  }}
-                />
-              )}
-            </Typography>
-          </Tooltip>
+          <ClippedColumnLabel
+            label={entry.label}
+            sx={{ fontSize: "13px", ml: 0.5 }}
+          >
+            {entry.locked && (
+              <Iconify
+                icon="mdi:lock-outline"
+                width={12}
+                sx={{
+                  ml: 0.5,
+                  verticalAlign: "text-bottom",
+                  color: "text.disabled",
+                }}
+              />
+            )}
+          </ClippedColumnLabel>
         }
       />
       {!entry.locked && (
@@ -177,7 +167,7 @@ GroupHeading.propTypes = { children: PropTypes.node.isRequired };
 /**
  * Columns picker for the Request Logs table. Clone of the house
  * PersonasColumnsPopover pattern with reorder, a custom-properties group,
- * declaration states and a stale group (D6, D11, D13, R34-R42).
+ * declaration states and a stale group.
  */
 const ColumnsPickerPopover = ({
   anchorEl,
@@ -189,6 +179,7 @@ const ColumnsPickerPopover = ({
   totalCount,
   atCap = false,
   declarationStatus,
+  declarationsAvailable,
   declarationsFetching = false,
   reservedDeclared = false,
   unavailableCustomCount = 0,
@@ -203,7 +194,6 @@ const ColumnsPickerPopover = ({
   const customHeadingRef = useRef(null);
   const removeButtons = useRef(new Map());
   const query = searchQuery.trim().toLowerCase();
-  const showSearch = totalCount > PICKER_SEARCH_THRESHOLD;
 
   const filteredBuiltin = useMemo(
     () =>
@@ -230,7 +220,8 @@ const ColumnsPickerPopover = ({
   // and error rows stay, since unloaded properties might match.
   const customFilteredOut =
     Boolean(query) &&
-    declarationStatus === "success" &&
+    declarationsAvailable &&
+    declarationStatus !== "error" &&
     filteredCustom.length === 0;
   const noMatches =
     filteredBuiltin.length === 0 &&
@@ -238,7 +229,7 @@ const ColumnsPickerPopover = ({
     filteredStale.length === 0;
 
   // Keep focus on the next stale row, else the previous one, else the search,
-  // once the removed row unmounts (R39-R42).
+  // once the removed row unmounts.
   const handleRemove = (id, index) => {
     const nextId = filteredStale[index + 1] ?? filteredStale[index - 1];
     flushSync(() => onRemove(id));
@@ -248,7 +239,7 @@ const ColumnsPickerPopover = ({
   // Keep Retry focus on a control that survives the successful reload. When a
   // search hides every custom declaration, the group heading unmounts, so the
   // search field is the stable focus target; otherwise the heading preserves
-  // the useful context while the error row becomes a loading row (R39-R42).
+  // the useful context while the error row becomes a loading row.
   const handleRetry = () => {
     (query ? searchRef.current : customHeadingRef.current)?.focus();
     onRetryDeclarations();
@@ -302,29 +293,27 @@ const ColumnsPickerPopover = ({
               <Iconify icon="mdi:close" width={18} />
             </IconButton>
           </Stack>
-          {showSearch && (
-            <Box sx={{ px: 1.5, pt: 1 }}>
-              <FormSearchField
-                size="small"
-                fullWidth
-                placeholder="Search columns"
-                inputProps={{ "aria-label": "Search columns" }}
-                inputRef={searchRef}
-                searchQuery={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-              {query && (
-                <Typography
-                  id={MOVE_HINT_ID}
-                  variant="caption"
-                  color="text.secondary"
-                  sx={{ display: "block", px: 0.5, pt: 0.5, fontSize: "11px" }}
-                >
-                  Clear the search to reorder columns.
-                </Typography>
-              )}
-            </Box>
-          )}
+          <Box sx={{ px: 1.5, pt: 1 }}>
+            <FormSearchField
+              size="small"
+              fullWidth
+              placeholder="Search columns"
+              inputProps={{ "aria-label": "Search columns" }}
+              inputRef={searchRef}
+              searchQuery={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            {query && (
+              <Typography
+                id={MOVE_HINT_ID}
+                variant="caption"
+                color="text.secondary"
+                sx={{ display: "block", px: 0.5, pt: 0.5, fontSize: "11px" }}
+              >
+                Clear the search to reorder columns.
+              </Typography>
+            )}
+          </Box>
           <Typography
             variant="caption"
             color="text.secondary"
@@ -369,7 +358,7 @@ const ColumnsPickerPopover = ({
               Custom properties
             </GroupHeading>
           )}
-          {declarationStatus === "pending" && (
+          {!declarationsAvailable && declarationStatus !== "error" && (
             <Stack
               direction="row"
               spacing={1}
@@ -388,7 +377,7 @@ const ColumnsPickerPopover = ({
           )}
           {declarationStatus === "error" && (
             <Alert
-              severity="error"
+              severity={declarationsAvailable ? "warning" : "error"}
               sx={{ mx: 1, my: 0.5 }}
               action={
                 <LoadingButton
@@ -402,14 +391,16 @@ const ColumnsPickerPopover = ({
                 </LoadingButton>
               }
             >
-              Couldn&apos;t load custom properties.
+              {declarationsAvailable
+                ? "Couldn't refresh custom properties. Showing previously loaded properties."
+                : "Couldn't load custom properties."}
               {unavailableCustomCount > 0 &&
                 ` ${unavailableCustomCount} saved custom column${
                   unavailableCustomCount === 1 ? "" : "s"
                 } unavailable.`}
             </Alert>
           )}
-          {declarationStatus === "success" &&
+          {declarationsAvailable &&
             entries.custom.length === 0 &&
             !customFilteredOut && (
               <Typography
@@ -428,7 +419,7 @@ const ColumnsPickerPopover = ({
                 </Link>
               </Typography>
             )}
-          {declarationStatus === "success" && atCap && !customFilteredOut && (
+          {declarationsAvailable && atCap && !customFilteredOut && (
             <Typography
               variant="caption"
               color="text.secondary"
@@ -437,7 +428,7 @@ const ColumnsPickerPopover = ({
               Column limit reached. Reset to default to add more.
             </Typography>
           )}
-          {declarationStatus === "success" &&
+          {declarationsAvailable &&
             filteredCustom.map((entry) => (
               <ColumnEntryRow
                 key={entry.id}
@@ -462,17 +453,10 @@ const ColumnsPickerPopover = ({
                     justifyContent="space-between"
                     sx={{ px: 1, py: 0.25 }}
                   >
-                    <Tooltip title={name} arrow placement="left" describeChild>
-                      <Typography
-                        variant="body2"
-                        noWrap
-                        tabIndex={0}
-                        sx={{ fontSize: "13px", color: "text.disabled" }}
-                        aria-label={name}
-                      >
-                        {name}
-                      </Typography>
-                    </Tooltip>
+                    <ClippedColumnLabel
+                      label={name}
+                      sx={{ fontSize: "13px", color: "text.disabled" }}
+                    />
                     <IconButton
                       ref={(el) => {
                         if (el) removeButtons.current.set(id, el);
@@ -516,6 +500,7 @@ ColumnsPickerPopover.propTypes = {
   atCap: PropTypes.bool,
   declarationStatus: PropTypes.oneOf(["pending", "error", "success"])
     .isRequired,
+  declarationsAvailable: PropTypes.bool.isRequired,
   declarationsFetching: PropTypes.bool,
   reservedDeclared: PropTypes.bool,
   unavailableCustomCount: PropTypes.number,

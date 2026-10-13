@@ -1,5 +1,5 @@
 import React from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   fireEvent,
   render,
@@ -17,7 +17,11 @@ import {
   resolveColumns,
 } from "../columnModel";
 
+afterEach(() => vi.restoreAllMocks());
+
 function buildProps(overrides = {}) {
+  const declarationsAvailable =
+    overrides.available ?? (overrides.status || "success") === "success";
   const resolved = resolveColumns({
     config: overrides.config || {
       v: 1,
@@ -28,7 +32,7 @@ function buildProps(overrides = {}) {
       { name: "tenant" },
       { name: "feature" },
     ],
-    status: overrides.status || "success",
+    status: declarationsAvailable ? "success" : "pending",
   });
   return {
     anchorEl: document.body,
@@ -39,6 +43,7 @@ function buildProps(overrides = {}) {
     visibleCount: resolved.visibleCount,
     totalCount: resolved.totalCount,
     declarationStatus: overrides.status || "success",
+    declarationsAvailable,
     unavailableCustomCount: overrides.unavailableCustomCount || 0,
     atCap: resolved.atCap,
     reservedDeclared: resolved.reservedDeclared,
@@ -99,7 +104,7 @@ async function tabTo(user, target) {
 }
 
 describe("ColumnsPickerPopover", () => {
-  it("is a named dialog that lists groups, counts and a locked Timestamp (AC5)", () => {
+  it("is a named dialog that lists groups, counts and a locked Timestamp", () => {
     const props = buildProps();
     render(<ColumnsPickerPopover {...props} />);
 
@@ -125,14 +130,82 @@ describe("ColumnsPickerPopover", () => {
     expect(
       within(dialog).getByRole("button", { name: "Move Session ID down" }),
     ).toBeDisabled();
-    // Search appears only above 8 entries (D6).
+    // Search is always available for the built-in and custom columns.
     expect(
       within(dialog).getByRole("textbox", { name: "Search columns" }),
     ).toBeInTheDocument();
     expect(within(dialog).queryByText(/Column limit reached/)).toBeNull();
   });
 
-  it("scrolls only the column list, so the header and Reset never cover a focused control (R39)", () => {
+  it("does not duplicate keyboard stops for fitting built-in, custom, or stale labels", () => {
+    const props = buildProps({
+      config: {
+        ...DEFAULT_CONFIG,
+        columns: [
+          ...DEFAULT_CONFIG.columns,
+          { id: "metadata:tenant" },
+          { id: "metadata:deleted" },
+        ],
+      },
+    });
+    render(<ColumnsPickerPopover {...props} />);
+    for (const label of ["Model", "tenant", "deleted"]) {
+      expect(screen.getByText(label, { exact: true })).not.toHaveAttribute(
+        "tabindex",
+      );
+    }
+    expect(screen.getByRole("checkbox", { name: "tenant" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Remove deleted" }),
+    ).toBeEnabled();
+  });
+
+  it("lets keyboard users reveal clipped custom and stale labels", async () => {
+    const user = userEvent.setup();
+    const name = "billing_reconciliation_account_identifier";
+    const staleName = "removed_billing_reconciliation_account_identifier";
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(
+      function () {
+        return [name, staleName].includes(this.textContent) ? 300 : 80;
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(108);
+    const props = buildProps({
+      config: {
+        ...DEFAULT_CONFIG,
+        columns: [
+          ...DEFAULT_CONFIG.columns,
+          { id: `metadata:${name}` },
+          { id: `metadata:${staleName}` },
+        ],
+      },
+      declarations: [{ name }],
+    });
+    render(<ColumnsPickerPopover {...props} />);
+    expect(screen.getByText("Model", { exact: true })).not.toHaveAttribute(
+      "tabindex",
+    );
+    const search = screen.getByRole("textbox", { name: "Search columns" });
+    await user.type(search, name);
+    const label = within(
+      screen.getByRole("dialog", { name: "Choose columns" }),
+    ).getByText(name, { exact: true });
+    expect(label).toHaveAttribute("tabindex", "0");
+    await tabTo(user, label);
+    expect(await screen.findByRole("tooltip", { name })).toBeVisible();
+    await user.clear(search);
+    await user.type(search, staleName);
+    const staleLabel = within(
+      screen.getByRole("dialog", { name: "Choose columns" }),
+    ).getByText(staleName, { exact: true });
+    expect(staleLabel).toHaveAttribute("tabindex", "0");
+    await tabTo(user, staleLabel);
+    expect(
+      await screen.findByRole("tooltip", { name: staleName }),
+    ).toBeVisible();
+  });
+
+  it("scrolls only the column list, so the header and Reset never cover a focused control", () => {
     render(<ColumnsPickerPopover {...buildProps()} />);
     const dialog = screen.getByRole("dialog", { name: "Choose columns" });
     let list = within(dialog).getByText("Built-in");
@@ -163,7 +236,7 @@ describe("ColumnsPickerPopover", () => {
     expect(dialog).not.toHaveStyle({ maxHeight: "480px" });
   });
 
-  it("toggles, moves and resets through keyboard-operable controls (AC5/AC17)", async () => {
+  it("toggles, moves and resets through keyboard-operable controls", async () => {
     const user = userEvent.setup();
     const props = buildProps();
     render(<ColumnsPickerPopover {...props} />);
@@ -198,7 +271,7 @@ describe("ColumnsPickerPopover", () => {
     expect(props.onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps focus on the pressed Move button while its column moves (AC17)", async () => {
+  it("keeps focus on the pressed Move button while its column moves", async () => {
     const user = userEvent.setup();
     render(<MovablePicker />);
     const dialog = screen.getByRole("dialog", { name: "Choose columns" });
@@ -219,7 +292,7 @@ describe("ColumnsPickerPopover", () => {
     expect(moveDown()).toHaveFocus();
   });
 
-  it("moves focus to the opposite Move button when a column reaches the end of its group (AC17)", async () => {
+  it("moves focus to the opposite Move button when a column reaches the end of its group", async () => {
     const user = userEvent.setup();
     render(<MovablePicker />);
     const dialog = screen.getByRole("dialog", { name: "Choose columns" });
@@ -374,7 +447,7 @@ describe("ColumnsPickerPopover", () => {
     expect(search()).toHaveValue("");
   });
 
-  it("shows the stale group with a Remove action after a successful fetch (AC14)", async () => {
+  it("shows the stale group with a Remove action after a successful fetch", async () => {
     const user = userEvent.setup();
     const props = buildProps({ declarations: [{ name: "feature" }] });
     render(<ColumnsPickerPopover {...props} />);
@@ -389,7 +462,7 @@ describe("ColumnsPickerPopover", () => {
     expect(props.onRemove).toHaveBeenCalledWith("metadata:tenant");
   });
 
-  it("moves focus to the next, else the previous, stale row after Remove, then to the search (R39-R42)", async () => {
+  it("moves focus to the next, else the previous, stale row after Remove, then to the search", async () => {
     const user = userEvent.setup();
     render(<StalePicker />);
     const dialog = screen.getByRole("dialog", { name: "Choose columns" });
@@ -406,7 +479,7 @@ describe("ColumnsPickerPopover", () => {
     ).toHaveFocus();
   });
 
-  it("shows an error row with an accessible Retry and no stored names while declarations fail (AC18/J5)", async () => {
+  it("shows an error row with an accessible Retry and no stored names while declarations fail", async () => {
     const user = userEvent.setup();
     const props = buildProps({ status: "error", unavailableCustomCount: 1 });
     render(<ColumnsPickerPopover {...props} />);
@@ -427,7 +500,72 @@ describe("ColumnsPickerPopover", () => {
     expect(props.onRetryDeclarations).toHaveBeenCalledTimes(1);
   });
 
-  it("restores Retry focus to Search when success filters out every custom declaration (R39-R42)", async () => {
+  it("keeps cached custom controls usable alongside a failed-refresh Retry", async () => {
+    const user = userEvent.setup();
+    const props = buildProps({
+      status: "error",
+      available: true,
+      config: {
+        ...DEFAULT_CONFIG,
+        columns: [
+          ...DEFAULT_CONFIG.columns,
+          { id: "metadata:tenant" },
+          { id: "metadata:feature" },
+        ],
+      },
+    });
+    render(<ColumnsPickerPopover {...props} />);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Couldn't refresh custom properties. Showing previously loaded properties.",
+    );
+    const tenant = screen.getByRole("checkbox", {
+      name: "tenant",
+      exact: true,
+    });
+    expect(tenant).toBeChecked();
+    expect(tenant).toBeEnabled();
+    await user.click(tenant);
+    expect(props.onToggle).toHaveBeenCalledWith("metadata:tenant");
+    await user.click(screen.getByRole("button", { name: "Move tenant down" }));
+    expect(props.onMove).toHaveBeenCalledWith("metadata:tenant", 1);
+    await user.type(
+      screen.getByRole("textbox", { name: "Search columns" }),
+      "no_match",
+    );
+    expect(
+      screen.getByRole("button", { name: "Retry loading custom properties" }),
+    ).toBeEnabled();
+    expect(screen.queryByText("No matching columns")).not.toBeInTheDocument();
+  });
+
+  it("keeps cached rows during Retry and keeps empty cached snapshots explicit", () => {
+    const props = buildProps({ status: "error", available: true });
+    const { rerender } = render(
+      <ColumnsPickerPopover {...props} declarationsFetching />,
+    );
+    expect(
+      screen.getByRole("checkbox", { name: "tenant", exact: true }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Retry loading custom properties" }),
+    ).toBeDisabled();
+    rerender(
+      <ColumnsPickerPopover
+        {...buildProps({ status: "error", available: true, declarations: [] })}
+      />,
+    );
+    expect(
+      screen.getByText("No custom properties declared.", { exact: false }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Showing previously loaded properties.",
+    );
+    expect(
+      screen.getByRole("button", { name: "Remove tenant" }),
+    ).toBeInTheDocument();
+  });
+
+  it("restores Retry focus to Search when success filters out every custom declaration", async () => {
     const user = userEvent.setup();
     const errorProps = buildProps({ status: "error" });
     const successProps = buildProps({ status: "success" });
@@ -452,7 +590,7 @@ describe("ColumnsPickerPopover", () => {
     expect(within(dialog).queryByText("Custom properties")).toBeNull();
   });
 
-  it("keeps focus on the Custom properties heading while Retry reloads (R39-R42)", async () => {
+  it("keeps focus on the Custom properties heading while Retry reloads", async () => {
     const user = userEvent.setup();
     const props = buildProps({ status: "error" });
     const { rerender } = render(<ColumnsPickerPopover {...props} />);
@@ -475,7 +613,7 @@ describe("ColumnsPickerPopover", () => {
     expect(retry()).toHaveFocus();
   });
 
-  it("disables Retry and shows progress while declarations reload (AC18)", () => {
+  it("disables Retry and shows progress while declarations reload", () => {
     render(
       <ColumnsPickerPopover
         {...buildProps({ status: "error" })}
@@ -500,7 +638,7 @@ describe("ColumnsPickerPopover", () => {
     expect(within(dialog).queryByText("tenant")).toBeNull();
   });
 
-  it("points to Custom Properties when nothing is declared (R36)", () => {
+  it("points to Custom Properties when nothing is declared", () => {
     render(
       <ColumnsPickerPopover
         {...buildProps({ config: DEFAULT_CONFIG, declarations: [] })}
@@ -515,13 +653,13 @@ describe("ColumnsPickerPopover", () => {
         name: "Declare one in Custom Properties",
       }),
     ).toHaveAttribute("href", "/dashboard/gateway/custom-properties");
-    // Ten built-ins already exceed the eight-entry threshold, so search stays (D6).
+    // Search remains available even when there are no custom declarations.
     expect(
       within(dialog).getByRole("textbox", { name: "Search columns" }),
     ).toBeInTheDocument();
   });
 
-  it("says Application and Service are built-in when they are the only declarations (D3/R36)", () => {
+  it("says Application and Service are built-in when they are the only declarations", () => {
     render(
       <ColumnsPickerPopover
         {...buildProps({

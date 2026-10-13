@@ -30,7 +30,7 @@ const DEFAULT_LABELS = [
 const decl = (name) => ({ name, organization: "org-1" });
 
 describe("columnModel ids and defaults", () => {
-  it("exposes the ten existing built-in columns in the existing order (AC1/R43)", () => {
+  it("exposes the ten existing built-in columns in the existing order", () => {
     expect(BUILTIN_COLUMNS.map((c) => c.label)).toEqual(DEFAULT_LABELS);
     expect(BUILTIN_COLUMNS.every((c) => c.id.startsWith("builtin:"))).toBe(
       true,
@@ -43,7 +43,7 @@ describe("columnModel ids and defaults", () => {
     expect(LOCKED_COLUMN_ID).toBe("builtin:startedAt");
   });
 
-  it("namespaces custom ids so a property named model cannot collide (AC9)", () => {
+  it("namespaces custom ids so a property named model cannot collide", () => {
     expect(toCustomColumnId("model")).toBe("metadata:model");
     expect(isCustomColumnId("metadata:model")).toBe(true);
     expect(isCustomColumnId("builtin:model")).toBe(false);
@@ -52,7 +52,7 @@ describe("columnModel ids and defaults", () => {
   });
 });
 
-describe("validateConfig (R14/R15/AC12)", () => {
+describe("validateConfig", () => {
   const valid = {
     v: 1,
     columns: [
@@ -205,7 +205,7 @@ describe("validateConfig (R14/R15/AC12)", () => {
     });
   });
 
-  it("never persists anything but ids (R13)", () => {
+  it("never persists anything but ids", () => {
     const result = validateConfig({
       v: 1,
       columns: [{ id: "builtin:startedAt", label: "x", value: "secret" }],
@@ -215,7 +215,7 @@ describe("validateConfig (R14/R15/AC12)", () => {
   });
 });
 
-describe("resolveColumns (R7, J5, J6)", () => {
+describe("resolveColumns", () => {
   it("renders the defaults with no declarations", () => {
     const { columns, stale } = resolveColumns({
       config: DEFAULT_CONFIG,
@@ -250,7 +250,7 @@ describe("resolveColumns (R7, J5, J6)", () => {
     });
   });
 
-  it("holds custom columns back while declarations are pending or failed, without touching config (AC18)", () => {
+  it("holds custom columns back while declarations are pending or failed, without touching config", () => {
     const config = {
       v: 1,
       columns: [...DEFAULT_CONFIG.columns, { id: "metadata:tenant" }],
@@ -268,7 +268,7 @@ describe("resolveColumns (R7, J5, J6)", () => {
     }
   });
 
-  it("marks undeclared saved ids stale only after a successful fetch (AC14)", () => {
+  it("marks undeclared saved ids stale only after a successful fetch", () => {
     const config = {
       v: 1,
       columns: [...DEFAULT_CONFIG.columns, { id: "metadata:tenant" }],
@@ -285,7 +285,7 @@ describe("resolveColumns (R7, J5, J6)", () => {
     expect(entries.custom[0].checked).toBe(false);
   });
 
-  it("excludes the reserved application/service keys from custom entries (D3)", () => {
+  it("excludes the reserved application/service keys from custom entries", () => {
     const { entries } = resolveColumns({
       config: DEFAULT_CONFIG,
       declarations: [decl("application"), decl("service"), decl("tenant")],
@@ -374,7 +374,7 @@ describe("config mutations", () => {
     expect(config.hidden).toEqual([]);
   });
 
-  it("toggle never hides the locked column (AC5)", () => {
+  it("toggle never hides the locked column", () => {
     expect(toggleColumn(DEFAULT_CONFIG, LOCKED_COLUMN_ID)).toEqual(
       DEFAULT_CONFIG,
     );
@@ -428,7 +428,7 @@ describe("config mutations", () => {
     ).toEqual(withCustom);
   });
 
-  describe("move skips ids the picker does not list (J5)", () => {
+  describe("move skips ids the picker does not list", () => {
     const ids = (config) => config.columns.map((c) => c.id);
     const declarations = [decl("a"), decl("b")];
     const withStale = {
@@ -545,7 +545,7 @@ describe("config mutations", () => {
         expect(moveColumn(withStale, "metadata:b", -1, movable)).toBe(
           withStale,
         );
-        // Built-ins stay movable (J6 keeps built-ins usable).
+        // Built-ins stay movable without loaded declarations.
         expect(
           ids(moveColumn(withStale, "builtin:model", 1, movable)).slice(0, 3),
         ).toEqual(["builtin:startedAt", "builtin:provider", "builtin:model"]);

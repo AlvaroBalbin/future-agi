@@ -6,7 +6,7 @@ import {
   readMetadataValue,
 } from "../formatMetadataValue";
 
-describe("formatMetadataValue (R17-R24, AC7, AC8)", () => {
+describe("formatMetadataValue", () => {
   it.each([
     [undefined, "-"],
     [null, "-"],
@@ -119,7 +119,7 @@ describe("formatMetadataValue (R17-R24, AC7, AC8)", () => {
     expect(format(`${"a".repeat(79)}🇯🇵`).text).toBe(`${"a".repeat(79)}…`);
   });
 
-  it("renders script-like strings literally (AC9)", () => {
+  it("renders script-like strings literally", () => {
     const value = "<img src=x onerror=alert(1)>";
     expect(formatMetadataValue(value).text).toBe(value);
   });
@@ -134,7 +134,7 @@ describe("formatMetadataValue (R17-R24, AC7, AC8)", () => {
   });
 });
 
-describe("readMetadataValue (R9, AC7, AC9)", () => {
+describe("readMetadataValue", () => {
   it("reads only own properties of a plain object", () => {
     expect(readMetadataValue({ tenant: "acme" }, "tenant")).toBe("acme");
     expect(readMetadataValue({ tenant: false }, "tenant")).toBe(false);

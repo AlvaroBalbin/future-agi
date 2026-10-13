@@ -46,8 +46,8 @@ const REORDERED = [
   'Tokens',
   'Session ID',
 ];
-// More than the picker's tab stops (Close, search, three per column) and the
-// stops between Columns and the first table row.
+// Covers this fixture's picker and table tab stops: Close, search, each
+// checkbox and enabled move arrow, plus labels whose text is actually clipped.
 const MAX_TAB_PRESSES = 40;
 const LOG_VISIBLE = POLL.ASYNC_JOB;
 const UI_READY = 60_000;

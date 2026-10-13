@@ -12,6 +12,7 @@ const columnsState = {
   atCap: false,
   storageKey: "agentcc.requestLogs.columns.v1:user-a:org-1:requests",
   declarationStatus: "success",
+  declarationsAvailable: true,
   declarationsFetching: false,
   reservedDeclared: false,
   unavailableCustomCount: 0,
@@ -59,7 +60,7 @@ describe("RequestExplorerSection columns control", () => {
     mockUseRequestColumns.mockReturnValue(columnsState);
   });
 
-  it("shows the Columns button beside Filters on the Requests tab and opens the named dialog (R1/R39)", async () => {
+  it("shows the Columns button beside Filters on the Requests tab and opens the named dialog", async () => {
     const user = userEvent.setup();
     window.history.pushState({}, "", "/dashboard/gateway/logs");
     render(<RequestExplorerSection />);
@@ -78,7 +79,7 @@ describe("RequestExplorerSection columns control", () => {
     ).toBeInTheDocument();
   });
 
-  it("has no Columns control and fetches no declarations on the Sessions tab (R1)", () => {
+  it("has no Columns control and fetches no declarations on the Sessions tab", () => {
     window.history.pushState({}, "", "/dashboard/gateway/logs?view=sessions");
     render(<RequestExplorerSection />);
     expect(screen.getByTestId("session-explorer")).toBeInTheDocument();
@@ -88,7 +89,7 @@ describe("RequestExplorerSection columns control", () => {
     expect(mockUseRequestColumns).not.toHaveBeenCalledWith({ enabled: true });
   });
 
-  it("passes the declaration refetch state to the picker's Retry (AC18)", async () => {
+  it("passes the declaration refetch state to the picker's Retry", async () => {
     const user = userEvent.setup();
     mockUseRequestColumns.mockReturnValue({
       ...columnsState,
@@ -103,7 +104,39 @@ describe("RequestExplorerSection columns control", () => {
     ).toBeDisabled();
   });
 
-  it("keeps the Columns button disabled until the preference key is known (J4)", () => {
+  it("passes cached declaration availability through when the refresh fails", async () => {
+    const user = userEvent.setup();
+    mockUseRequestColumns.mockReturnValue({
+      ...columnsState,
+      declarationStatus: "error",
+      declarationsAvailable: true,
+      pickerEntries: {
+        builtin: [],
+        custom: [
+          {
+            id: "metadata:tenant",
+            label: "tenant",
+            checked: true,
+            inConfig: true,
+            canMoveUp: false,
+            canMoveDown: false,
+          },
+        ],
+      },
+    });
+    window.history.pushState({}, "", "/dashboard/gateway/logs");
+    render(<RequestExplorerSection />);
+    await user.click(screen.getByRole("button", { name: "Columns" }));
+    expect(screen.getByRole("checkbox", { name: "tenant" })).toBeChecked();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Showing previously loaded properties",
+    );
+    expect(
+      screen.getByRole("button", { name: "Retry loading custom properties" }),
+    ).toBeEnabled();
+  });
+
+  it("keeps the Columns button disabled until the preference key is known", () => {
     mockUseRequestColumns.mockReturnValue({
       ...columnsState,
       storageKey: null,

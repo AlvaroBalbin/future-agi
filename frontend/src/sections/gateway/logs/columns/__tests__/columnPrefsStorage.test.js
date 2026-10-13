@@ -30,7 +30,7 @@ function createMemoryStorage() {
   };
 }
 
-describe("buildKey (R13/R29)", () => {
+describe("buildKey", () => {
   it("joins the versioned prefix with user, org and view ids", () => {
     expect(buildKey("user-a", "org-1", "requests")).toBe(KEY_A);
   });
@@ -60,7 +60,7 @@ describe("storage adapter", () => {
     vi.restoreAllMocks();
   });
 
-  it("round-trips a valid record and rejects corrupt ones without rewriting them (AC12)", () => {
+  it("round-trips a valid record and rejects corrupt ones without rewriting them", () => {
     expect(writeConfig(KEY_A, DEFAULT_CONFIG)).toEqual({ ok: true });
     expect(readConfig(KEY_A)).toEqual({ ok: true, config: DEFAULT_CONFIG });
 
@@ -100,7 +100,7 @@ describe("storage adapter", () => {
       },
     ],
   ])(
-    "rejects %s as invalid and leaves the stored bytes alone (AC12)",
+    "rejects %s as invalid and leaves the stored bytes alone",
     (_label, record) => {
       const bytes = JSON.stringify(record);
       storage.setItem(KEY_A, bytes);
@@ -131,7 +131,7 @@ describe("storage adapter", () => {
     expect(storage.removeItem).not.toHaveBeenCalled();
   });
 
-  it("removes only the given key (AC13)", () => {
+  it("removes only the given key", () => {
     const keyB = buildKey("user-b", "org-1", "requests");
     writeConfig(KEY_A, DEFAULT_CONFIG);
     writeConfig(keyB, DEFAULT_CONFIG);
@@ -141,7 +141,7 @@ describe("storage adapter", () => {
     expect(storage.getItem(keyB)).toBe(before);
   });
 
-  it("reports quota and security failures instead of throwing (R16)", () => {
+  it("reports quota and security failures instead of throwing", () => {
     storage.setItem.mockImplementation(() => {
       throw new DOMException("quota", "QuotaExceededError");
     });
@@ -176,7 +176,7 @@ describe("storage adapter", () => {
     });
   });
 
-  it("persists only ids, never labels or values (R13)", () => {
+  it("persists only ids, never labels or values", () => {
     writeConfig(KEY_A, {
       v: 1,
       columns: [{ id: "builtin:startedAt", label: "Timestamp", sample: "x" }],

@@ -1,4 +1,4 @@
-// Column model for the Request Logs table (TH-7041).
+// Column model for the Request Logs table.
 //
 // One ordered, versioned configuration drives header, rows, skeleton and the
 // empty-state colSpan. Built-in ids are namespaced `builtin:<id>` and declared
@@ -14,7 +14,6 @@ export const CUSTOM_COLUMN_WIDTH = 140;
 // Custom header and cell text is capped at the column width less the small
 // TableCell's 16px side padding, so the column stays CUSTOM_COLUMN_WIDTH wide.
 export const CUSTOM_COLUMN_TEXT_WIDTH = CUSTOM_COLUMN_WIDTH - 2 * 16;
-export const PICKER_SEARCH_THRESHOLD = 8;
 export const COLUMNS_POPOVER_ID = "request-columns-popover";
 
 const BUILTIN_PREFIX = "builtin:";
@@ -24,7 +23,7 @@ const METADATA_PREFIX = "metadata:";
 // (futureagi/agentcc/validators.py); the frontend still treats names as text.
 const METADATA_NAME_RE = /^[A-Za-z0-9_-]{1,255}$/;
 
-// The ten existing columns, in the existing default order (R43 / AC1).
+// The ten existing columns, in the existing default order.
 export const BUILTIN_COLUMNS = [
   {
     key: "startedAt",
@@ -59,7 +58,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   hidden: [],
 });
 
-// Application and Service are already built-in columns (D3).
+// Application and Service are already built-in columns.
 const RESERVED_METADATA_NAMES = new Set([
   REQUEST_TAG.APPLICATION,
   REQUEST_TAG.SERVICE,
@@ -90,8 +89,8 @@ function isKnownId(id) {
 
 /**
  * Validate a parsed storage record. Any defect rejects the whole record and
- * the caller falls back to DEFAULT_CONFIG (R14/R15). Returns a normalized
- * config that holds ids only (R13) or null.
+ * the caller falls back to DEFAULT_CONFIG. Returns a normalized
+ * config that holds ids only or null.
  */
 export function validateConfig(raw) {
   if (!isPlainObject(raw)) return null;
@@ -160,10 +159,11 @@ function customColumn(name) {
 
 /**
  * Resolve the visible ordered columns plus picker entries from a config, the
- * current-org declarations and the declaration query status.
+ * current-org declarations and their snapshot availability status.
  *
- * Custom columns render only while `status === "success"` (J6/AC18); saved ids
- * that a successful fetch does not declare are reported as `stale` (J5/AC14).
+ * `status === "success"` means a declaration snapshot is available, including
+ * cached data after a failed refresh. Saved ids absent from that snapshot are
+ * reported as `stale`; unavailable snapshots expose no custom names.
  */
 export function resolveColumns({ config, declarations, status }) {
   const safeConfig = config || DEFAULT_CONFIG;
@@ -257,7 +257,7 @@ export function resolveColumns({ config, declarations, status }) {
     totalCount: all.length,
     // No further id fits in the config (toggleColumn will not append).
     atCap: safeConfig.columns.length >= MAX_COLUMN_ENTRIES,
-    // Declared names left out because they are built-in columns (D3).
+    // Declared names left out because they are built-in columns.
     reservedDeclared:
       status === "success" &&
       declarations.some((item) => RESERVED_METADATA_NAMES.has(item?.name)),
@@ -268,7 +268,7 @@ function sameKind(a, b) {
   return isCustomColumnId(a) === isCustomColumnId(b);
 }
 
-/** Show/hide a column. Hidden columns keep their slot (J2); unknown custom ids are appended. */
+/** Show/hide a column. Hidden columns keep their slot; unknown custom ids are appended. */
 export function toggleColumn(config, id) {
   if (id === LOCKED_COLUMN_ID || !isKnownId(id)) return config;
   const present = config.columns.some((c) => c.id === id);
@@ -286,7 +286,7 @@ export function toggleColumn(config, id) {
  * Move a column one step among entries of the same kind; the locked column
  * never moves. Only ids in `movableIds` (resolveColumns().movableIds) move or
  * are swapped with, so a stale id stays in its slot instead of absorbing a
- * click (J5); hidden listed ids keep their slot semantics (J2).
+ * click; hidden listed ids keep their slot semantics.
  */
 export function moveColumn(config, id, delta, movableIds) {
   if (id === LOCKED_COLUMN_ID || (delta !== -1 && delta !== 1)) return config;

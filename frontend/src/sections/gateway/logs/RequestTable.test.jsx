@@ -1,5 +1,5 @@
 import React from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, userEvent, within } from "src/utils/test-utils";
 import RequestTable from "./RequestTable";
 import {
@@ -8,6 +8,8 @@ import {
   CUSTOM_COLUMN_WIDTH,
   resolveColumns,
 } from "./columns/columnModel";
+
+afterEach(() => vi.restoreAllMocks());
 
 const mockState = {
   data: {
@@ -122,7 +124,7 @@ describe("RequestTable", () => {
     expect(onSelectLog).toHaveBeenCalledWith("log-row-id");
   });
 
-  it("renders exactly the ten default columns in order without a columns prop (AC1/R43)", () => {
+  it("renders exactly the ten default columns in order without a columns prop", () => {
     render(<RequestTable {...baseProps} />);
     expect(headerLabels()).toEqual(DEFAULT_LABELS);
     const firstRow = within(screen.getByRole("table")).getAllByRole("row")[1];
@@ -132,7 +134,7 @@ describe("RequestTable", () => {
     );
   });
 
-  it("renders a custom metadata column per row with - for missing values and no sort control (AC2/AC7/AC10)", () => {
+  it("renders a custom metadata column per row with - for missing values and no sort control", () => {
     render(<RequestTable {...baseProps} columns={customColumns(["tenant"])} />);
     expect(headerLabels()).toEqual([...DEFAULT_LABELS, "tenant"]);
     const rows = within(screen.getByRole("table")).getAllByRole("row");
@@ -143,7 +145,7 @@ describe("RequestTable", () => {
     expect(baseProps.setFilters).not.toHaveBeenCalled();
   });
 
-  it("keeps a custom property named model distinct from the built-in Model and renders script-like values as text (AC9)", () => {
+  it("keeps a custom property named model distinct from the built-in Model and renders script-like values as text", () => {
     render(<RequestTable {...baseProps} columns={customColumns(["model"])} />);
     expect(headerLabels()).toEqual([...DEFAULT_LABELS, "model"]);
     const table = within(screen.getByRole("table"));
@@ -152,14 +154,19 @@ describe("RequestTable", () => {
     expect(document.querySelector("img")).toBeNull();
   });
 
-  it("renders compact JSON for object values and preserves false/zero (AC7)", () => {
+  it("renders compact JSON for object values and preserves false/zero", () => {
     render(<RequestTable {...baseProps} columns={customColumns(["flags"])} />);
     expect(
       within(screen.getByRole("table")).getByText('{"beta":false,"count":0}'),
     ).toBeInTheDocument();
   });
 
-  it("keeps a custom header at the 140px column width as one ellipsized line with its full name on hover (R7-R12)", () => {
+  it("keeps a clipped custom header bounded and reveals its full name by keyboard", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(500);
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(
+      CUSTOM_COLUMN_TEXT_WIDTH,
+    );
     const name = `${"billing_reconciliation_".repeat(3)}acc`; // 72 characters
     render(<RequestTable {...baseProps} columns={customColumns([name])} />);
     const header = screen.getByRole("columnheader", { name });
@@ -183,9 +190,22 @@ describe("RequestTable", () => {
         parseFloat(paddingLeft) +
         parseFloat(paddingRight),
     ).toBe(CUSTOM_COLUMN_WIDTH);
+    for (let i = 0; i < 20 && document.activeElement !== label; i += 1)
+      await user.tab();
+    expect(label).toHaveFocus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(name);
   });
 
-  it("drives header, rows, skeleton and empty colSpan from the same column list (AC6)", () => {
+  it("does not add a keyboard stop to a custom header whose label fits", () => {
+    render(<RequestTable {...baseProps} columns={customColumns(["tenant"])} />);
+    const header = screen.getByRole("columnheader", {
+      name: "tenant",
+      exact: true,
+    });
+    expect(within(header).getByText("tenant")).not.toHaveAttribute("tabindex");
+  });
+
+  it("drives header, rows, skeleton and empty colSpan from the same column list", () => {
     const columns = customColumns(
       ["tenant"],
       ["builtin:provider", "builtin:cost"],
@@ -218,7 +238,7 @@ describe("RequestTable", () => {
     mockState.data = savedData;
   });
 
-  describe("built-in sort headers (R44)", () => {
+  describe("built-in sort headers", () => {
     const sortLabel = (name) =>
       within(screen.getByRole("columnheader", { name })).getByRole("button");
 

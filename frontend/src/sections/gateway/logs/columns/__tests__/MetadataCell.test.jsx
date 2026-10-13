@@ -22,7 +22,7 @@ function renderCell(value) {
   return { ...view, cell };
 }
 
-describe("MetadataCell keyboard access (R41/AC17)", () => {
+describe("MetadataCell keyboard access", () => {
   afterEach(() => {
     delete window.__metadataCellExecuted;
     vi.restoreAllMocks();
@@ -77,7 +77,7 @@ describe("MetadataCell keyboard access (R41/AC17)", () => {
     expect(tooltip.textContent).toBe(value);
   });
 
-  it("bounds the cell text to one ellipsized line that keeps the column at its 140px width (R7-R12)", () => {
+  it("bounds the cell text to one ellipsized line that keeps the column at its 140px width", () => {
     const { cell } = renderCell("acme");
     const text = within(cell).getByText("acme");
     expect(text).toHaveStyle({
@@ -95,7 +95,7 @@ describe("MetadataCell keyboard access (R41/AC17)", () => {
     expect(CUSTOM_COLUMN_WIDTH).toBe(140);
   });
 
-  it("shows a capped value's truncation marker first, in a tooltip wide enough for 2,000 characters (AC8)", async () => {
+  it("shows a capped value's truncation marker first, in a tooltip wide enough for 2,000 characters", async () => {
     const user = userEvent.setup();
     renderCell("v".repeat(2500));
 

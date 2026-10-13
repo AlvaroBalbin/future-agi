@@ -81,6 +81,7 @@ describe("useRequestColumns", () => {
     declarationsState.data = [{ name: "tenant", organization: "org-1" }];
     declarationsState.status = "success";
     declarationsState.isFetching = false;
+    declarationsState.isPlaceholderData = false;
     declarationsState.refetch = vi.fn();
     mockUseCustomProperties.mockReset();
     mockUseCustomProperties.mockReturnValue(declarationsState);
@@ -91,7 +92,7 @@ describe("useRequestColumns", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders the ten default columns with no stored config (AC1)", () => {
+  it("renders the ten default columns with no stored config", () => {
     const { result } = renderHook(() => useRequestColumns());
     expect(labels(result)).toEqual([
       "Timestamp",
@@ -110,7 +111,7 @@ describe("useRequestColumns", () => {
     expect(storage.setItem).not.toHaveBeenCalled();
   });
 
-  it("queries declarations only while enabled and reports their failure itself (J6)", () => {
+  it("queries declarations only while enabled and reports their failure itself", () => {
     const { rerender } = renderHook(
       ({ enabled }) => useRequestColumns({ enabled }),
       { initialProps: { enabled: false } },
@@ -126,7 +127,7 @@ describe("useRequestColumns", () => {
     );
   });
 
-  it("toggle, move and reset update columns and persist ids only (AC2/AC3/AC13)", () => {
+  it("toggle, move and reset update columns and persist ids only", () => {
     const { result } = renderHook(() => useRequestColumns());
 
     act(() => result.current.toggle("metadata:tenant"));
@@ -139,7 +140,7 @@ describe("useRequestColumns", () => {
     expect(labels(result)).not.toContain("Provider");
 
     // Hidden Provider keeps its slot, so one step passes it and a second
-    // step passes Application (J2).
+    // step passes Application.
     act(() => result.current.move("builtin:model", 1));
     expect(result.current.config.columns.slice(0, 3).map((c) => c.id)).toEqual([
       "builtin:startedAt",
@@ -197,7 +198,7 @@ describe("useRequestColumns", () => {
     expect(result.current.config).toEqual(DEFAULT_CONFIG);
   });
 
-  it("restores a stored config on mount for the same identity (AC3)", () => {
+  it("restores a stored config on mount for the same identity", () => {
     storage.setItem(
       KEY_A,
       JSON.stringify({
@@ -221,7 +222,7 @@ describe("useRequestColumns", () => {
     ]);
   });
 
-  it("never reuses another identity's config or names at any render (AC4)", () => {
+  it("never reuses another identity's config or names at any render", () => {
     storage.setItem(
       KEY_A,
       JSON.stringify({
@@ -257,7 +258,7 @@ describe("useRequestColumns", () => {
     expect(storage.getItem(KEY_A)).toContain("metadata:tenant");
   });
 
-  it("ignores declarations from another organization (AC4)", () => {
+  it("ignores declarations from another organization", () => {
     declarationsState.data = [
       { name: "tenant", organization: "org-2" },
       { name: "feature", organization: "org-1" },
@@ -268,7 +269,7 @@ describe("useRequestColumns", () => {
     ]);
   });
 
-  it("tells the picker when only reserved names are declared and when the column cap is hit (D3)", () => {
+  it("tells the picker when only reserved names are declared and when the column cap is hit", () => {
     declarationsState.data = [
       { name: "application", organization: "org-1" },
       { name: "service", organization: "org-1" },
@@ -292,7 +293,7 @@ describe("useRequestColumns", () => {
     expect(result.current.atCap).toBe(true);
   });
 
-  it("does not touch storage until identity and organization are ready (J4)", () => {
+  it("does not touch storage until identity and organization are ready", () => {
     orgState.isReady = false;
     const { result } = renderHook(() => useRequestColumns());
     expect(result.current.storageKey).toBeNull();
@@ -303,7 +304,7 @@ describe("useRequestColumns", () => {
     expect(storage.setItem).not.toHaveBeenCalled();
   });
 
-  it("falls back to defaults on a corrupt record without rewriting it (AC12)", () => {
+  it("falls back to defaults on a corrupt record without rewriting it", () => {
     storage.setItem(KEY_A, "{corrupt");
     const { result } = renderHook(() => useRequestColumns());
     expect(labels(result)).toHaveLength(10);
@@ -334,23 +335,20 @@ describe("useRequestColumns", () => {
         hidden: ["builtin:provider"],
       },
     ],
-  ])(
-    "reads %s back as the defaults without rewriting it (AC12)",
-    (_label, record) => {
-      const bytes = JSON.stringify(record);
-      storage.setItem(KEY_A, bytes);
-      storage.setItem.mockClear();
-      const { result } = renderHook(() => useRequestColumns());
-      expect(result.current.config).toEqual(DEFAULT_CONFIG);
-      expect(labels(result)).toEqual(DEFAULT_LABELS);
-      expect(mockEnqueueSnackbar).not.toHaveBeenCalled();
-      expect(storage.getItem(KEY_A)).toBe(bytes);
-      expect(storage.setItem).not.toHaveBeenCalled();
-      expect(storage.removeItem).not.toHaveBeenCalled();
-    },
-  );
+  ])("reads %s back as the defaults without rewriting it", (_label, record) => {
+    const bytes = JSON.stringify(record);
+    storage.setItem(KEY_A, bytes);
+    storage.setItem.mockClear();
+    const { result } = renderHook(() => useRequestColumns());
+    expect(result.current.config).toEqual(DEFAULT_CONFIG);
+    expect(labels(result)).toEqual(DEFAULT_LABELS);
+    expect(mockEnqueueSnackbar).not.toHaveBeenCalled();
+    expect(storage.getItem(KEY_A)).toBe(bytes);
+    expect(storage.setItem).not.toHaveBeenCalled();
+    expect(storage.removeItem).not.toHaveBeenCalled();
+  });
 
-  it("keeps working in memory and shows a notice when the write fails (R16/AC12)", () => {
+  it("keeps working in memory and shows a notice when the write fails", () => {
     storage.setItem.mockImplementation(() => {
       throw new DOMException("quota", "QuotaExceededError");
     });
@@ -363,7 +361,7 @@ describe("useRequestColumns", () => {
     );
   });
 
-  it("resets in memory and shows a notice when removing the record fails (R16)", () => {
+  it("resets in memory and shows a notice when removing the record fails", () => {
     const { result } = renderHook(() => useRequestColumns());
     act(() => result.current.toggle("builtin:provider"));
     storage.removeItem.mockImplementation(() => {
@@ -377,7 +375,7 @@ describe("useRequestColumns", () => {
     );
   });
 
-  it("hides custom columns while declarations are pending or failed and keeps the saved config (AC18)", () => {
+  it("hides custom columns while declarations are pending or failed and keeps the saved config", () => {
     storage.setItem(
       KEY_A,
       JSON.stringify({
@@ -414,7 +412,75 @@ describe("useRequestColumns", () => {
     });
   });
 
-  describe("moving past an undeclared saved id (J5)", () => {
+  it("keeps cached declarations and editing usable after a failed background refresh", () => {
+    declarationsState.data = [
+      { name: "tenant", organization: "org-1" },
+      { name: "feature", organization: "org-1" },
+    ];
+    const { result, rerender } = renderHook(() => useRequestColumns());
+    act(() => result.current.toggle("metadata:tenant"));
+    act(() => result.current.toggle("metadata:feature"));
+    const stored = storage.getItem(KEY_A);
+    storage.setItem.mockClear();
+
+    declarationsState.status = "error";
+    rerender();
+    expect(labels(result)).toEqual([...DEFAULT_LABELS, "tenant", "feature"]);
+    expect(result.current.declarationsAvailable).toBe(true);
+    expect(result.current.declarationStatus).toBe("error");
+    expect(result.current.unavailableCustomCount).toBe(0);
+    expect(result.current.pickerEntries.custom).toHaveLength(2);
+    expect(storage.getItem(KEY_A)).toBe(stored);
+    expect(storage.setItem).not.toHaveBeenCalled();
+
+    act(() => result.current.move("metadata:feature", -1));
+    expect(labels(result).slice(-2)).toEqual(["feature", "tenant"]);
+    act(() => result.current.toggle("metadata:tenant"));
+    expect(labels(result)).not.toContain("tenant");
+    declarationsState.isFetching = true;
+    rerender();
+    expect(labels(result)).toContain("feature");
+    expect(result.current.declarationsFetching).toBe(true);
+  });
+
+  it("treats an empty cached declaration list as available after refresh failure", () => {
+    storage.setItem(
+      KEY_A,
+      JSON.stringify({
+        ...DEFAULT_CONFIG,
+        columns: [...DEFAULT_CONFIG.columns, { id: "metadata:tenant" }],
+      }),
+    );
+    declarationsState.data = [];
+    declarationsState.status = "error";
+    const { result } = renderHook(() => useRequestColumns());
+    expect(result.current.declarationsAvailable).toBe(true);
+    expect(result.current.unavailableCustomCount).toBe(0);
+    expect(result.current.stale).toEqual(["metadata:tenant"]);
+    expect(labels(result)).toEqual(DEFAULT_LABELS);
+  });
+
+  it("does not use placeholder declarations or declarations before organization readiness", () => {
+    storage.setItem(
+      KEY_A,
+      JSON.stringify({
+        ...DEFAULT_CONFIG,
+        columns: [...DEFAULT_CONFIG.columns, { id: "metadata:tenant" }],
+      }),
+    );
+    declarationsState.isPlaceholderData = true;
+    const { result, rerender } = renderHook(() => useRequestColumns());
+    expect(result.current.declarationsAvailable).toBe(false);
+    expect(result.current.pickerEntries.custom).toEqual([]);
+    expect(labels(result)).not.toContain("tenant");
+    declarationsState.isPlaceholderData = false;
+    orgState.isReady = false;
+    rerender();
+    expect(result.current.declarationsAvailable).toBe(false);
+    expect(result.current.pickerEntries.custom).toEqual([]);
+  });
+
+  describe("moving past an undeclared saved id", () => {
     const customIds = (result) =>
       result.current.pickerEntries.custom.map((e) => e.id);
     const record = JSON.stringify({
@@ -487,7 +553,7 @@ describe("useRequestColumns", () => {
     });
   });
 
-  it("reports stale ids after a successful fetch and removes one on request (AC14)", () => {
+  it("reports stale ids after a successful fetch and removes one on request", () => {
     storage.setItem(
       KEY_A,
       JSON.stringify({

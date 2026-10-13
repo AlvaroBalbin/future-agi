@@ -1,7 +1,7 @@
 import React, { useLayoutEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { TableCell, Tooltip, Typography } from "@mui/material";
-import { CUSTOM_COLUMN_TEXT_WIDTH } from "./columnModel";
+import { CUSTOM_COLUMN_TEXT_WIDTH, toCustomColumnId } from "./columnModel";
 import { formatMetadataValue, readMetadataValue } from "./formatMetadataValue";
 
 // 720px fits 2,000 characters of typical text within 40vh on viewports 900px
@@ -20,10 +20,10 @@ const TOOLTIP_SLOT_PROPS = {
 
 /**
  * Generic cell for a declared custom-property column. Reads exactly
- * `metadata[name]` and renders plain text only (R17-R24). Truncated values, and
+ * `metadata[name]` and renders plain text only. Truncated values, and
  * shorter ones the bounded cell clips, are focusable so the tooltip opens on
  * focus as well as hover, and the Tooltip's string title gives them their
- * accessible name (R41).
+ * accessible name.
  */
 const MetadataCell = React.memo(function MetadataCell({ metadata, name }) {
   const { text, full, truncated } = formatMetadataValue(
@@ -54,7 +54,7 @@ const MetadataCell = React.memo(function MetadataCell({ metadata, name }) {
   );
 
   return (
-    <TableCell data-column={`metadata:${name}`}>
+    <TableCell data-column={toCustomColumnId(name)}>
       {showsFull ? (
         <Tooltip title={full} placement="top" slotProps={TOOLTIP_SLOT_PROPS}>
           {content}

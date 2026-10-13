@@ -27,13 +27,14 @@ import {
   CUSTOM_COLUMN_TEXT_WIDTH,
 } from "./columns/columnModel";
 import MetadataCell from "./columns/MetadataCell";
+import ClippedColumnLabel from "./columns/ClippedColumnLabel";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 // Column definitions live in ./columns/columnModel. With no `columns` prop the
-// table renders the ten built-ins in their original order (TH-7041, R43).
+// table renders the ten built-ins in their original order.
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
@@ -395,26 +396,12 @@ const RequestTable = ({
                   data-column={col.id}
                 >
                   {col.kind === "metadata" ? (
-                    <Tooltip
-                      title={col.label}
-                      arrow
+                    <ClippedColumnLabel
+                      label={col.label}
                       placement="top"
-                      describeChild
-                    >
-                      <Typography
-                        variant="inherit"
-                        component="span"
-                        noWrap
-                        tabIndex={0}
-                        aria-label={col.label}
-                        sx={{
-                          display: "block",
-                          maxWidth: CUSTOM_COLUMN_TEXT_WIDTH,
-                        }}
-                      >
-                        {col.label}
-                      </Typography>
-                    </Tooltip>
+                      variant="inherit"
+                      sx={{ maxWidth: CUSTOM_COLUMN_TEXT_WIDTH }}
+                    />
                   ) : col.sortable ? (
                     <TableSortLabel
                       active={sortField === (fieldMap[col.key] || col.key)}
