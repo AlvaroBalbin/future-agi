@@ -571,8 +571,12 @@ class ClickHouseVectorDB:
         mark_existing_deleted: bool = True,
     ) -> str:
         """
-        Upserts a vector into the specified table, marking previous entries with the same metadata as deleted.
+        Inserts a vector and optionally marks matching previous entries deleted.
         Returns the ID of the newly inserted or updated entry.
+
+        ``mark_existing_deleted=False`` is used while staging a feedback
+        replacement; the caller commits the group tombstone only after every
+        replacement insert succeeds.
         """
         new_id = str(uuid.uuid4())
         metadata = sanitize_metadata(metadata)
@@ -634,6 +638,9 @@ class ClickHouseVectorDB:
         ``upsert_vector``, but standalone — for lifecycle events (e.g. a
         ``Feedback`` row being soft-deleted) that must revoke retrieval
         eligibility without inserting a replacement vector.
+
+        ``exclude_filters`` keeps a staged replacement revision active while
+        older vectors for the same feedback are revoked.
         """
         if not filters:
             raise ValueError("At least one metadata filter is required")
