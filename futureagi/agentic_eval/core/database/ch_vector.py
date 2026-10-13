@@ -632,6 +632,9 @@ class ClickHouseVectorDB:
         ``Feedback`` row being soft-deleted) that must revoke retrieval
         eligibility without inserting a replacement vector.
         """
+        if not filters:
+            raise ValueError("At least one metadata filter is required")
+
         clauses = ["deleted = 0"]
         if eval_id:
             clauses.append(f"eval_id = '{sanitize_sql_value(eval_id)}'")
@@ -645,7 +648,7 @@ class ClickHouseVectorDB:
             + " AND ".join(clauses)
         )
         start_time = datetime.now()
-        self.client.execute(update_query)
+        self.client.execute(update_query, settings={"mutations_sync": 2})
         elapsed_time = (datetime.now() - start_time).total_seconds()
         logger.info(
             "ch_vector_mark_deleted_done",

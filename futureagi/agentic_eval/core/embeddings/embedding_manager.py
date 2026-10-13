@@ -434,6 +434,7 @@ class EmbeddingManager:
         unique_key_value,
         unique_key="item_id",
         exclude_keys=None,
+        embedding_vector=None,
     ):
         """
         Inserts the embedding of a data item into the ClickHouse vector table.
@@ -446,27 +447,26 @@ class EmbeddingManager:
         """
         db_client = self.db_client
         db_client.create_table(table_name)
-        if index_col_type == "image":
-            embedding_vector = self.get_image_query_embedding(
-                "image", data[column_name]
-            )
-
-        elif index_col_type == "audio":
-            embedding_vector = self.get_audio_query_embedding(
-                "audio", data[column_name]
-            )
-
-        elif index_col_type == "image-text":
-            embedding_vector = self.get_image_query_embedding(
-                "image-text", data[column_name]
-            )
-        else:
-            model = model_manager.text_model
-            if model_manager._use_serving:
-                embedding_vector = model(data[column_name])
+        if embedding_vector is None:
+            if index_col_type == "image":
+                embedding_vector = self.get_image_query_embedding(
+                    "image", data[column_name]
+                )
+            elif index_col_type == "audio":
+                embedding_vector = self.get_audio_query_embedding(
+                    "audio", data[column_name]
+                )
+            elif index_col_type == "image-text":
+                embedding_vector = self.get_image_query_embedding(
+                    "image-text", data[column_name]
+                )
             else:
-                embedding_vector = model.encode(data[column_name])
-                embedding_vector = embedding_vector.tolist()
+                model = model_manager.text_model
+                if model_manager._use_serving:
+                    embedding_vector = model(data[column_name])
+                else:
+                    embedding_vector = model.encode(data[column_name])
+                    embedding_vector = embedding_vector.tolist()
 
         db_client.upsert_vector(
             table_name,
@@ -563,6 +563,8 @@ class EmbeddingManager:
                 mod_dict["input_type"] = input_dict[inp]
                 if table_name == GROUND_TRUTH_TABLE_NAME:
                     mod_dict["column_name"] = str(inp)
+                if table_name == FEEDBACK_TABLE_NAME and mod_dict.get("feedback_id"):
+                    mod_dict["feedback_input"] = str(inp)
 
                 # Get embedding for this input
                 try:
@@ -586,6 +588,9 @@ class EmbeddingManager:
                             embedding_vector = model.encode(mod_dict["index_column"])
                             embedding_vector = embedding_vector.tolist()
 
+                    if embedding_vector is None or len(embedding_vector) == 0:
+                        raise ValueError(f"No embedding generated for input {inp}")
+
                     vectors.append(embedding_vector)
 
                     metadata_list.append(mod_dict)
@@ -601,33 +606,31 @@ class EmbeddingManager:
                         f"Error getting embedding for table {table_name}: {e}"
                     )
                     raise
-                try:
-                    if insert and table_name==FEEDBACK_TABLE_NAME and eval_id!="":
-                        # Tombstone identity: (feedback_id, feedback_input) so a
-                        # retune revokes the prior vector for the same Feedback
-                        # record AND input field — a multi-input submission keeps
-                        # one active vector per field.
-                        if mod_dict.get("feedback_id"):
-                            mod_dict["feedback_input"] = str(inp)
-                            unique_key = ["feedback_id", "feedback_input"]
-                            unique_key_value = mod_dict["feedback_id"]
-                        else:
-                            unique_key = "item_id"
-                            unique_key_value = mod_dict["item_id"]
-                        self.insert_embedding(
-                            eval_id,
-                            data=mod_dict,
-                            table_name=f"{table_name}",
-                            index_col_type=index_col_type[n],  # Accessing index_col_type[n]
-                            column_name="index_column",
-                            unique_key_value=unique_key_value,
-                            unique_key=unique_key,
-                        )
-
-                except Exception:
-                    traceback.print_exc()
-
-                    raise
+            if insert and table_name == FEEDBACK_TABLE_NAME and eval_id != "":
+                if row_dict.get("feedback_id"):
+                    self.db_client.create_table(table_name)
+                    self.db_client.mark_deleted_by_metadata(
+                        table_name, {"feedback_id": str(row_dict["feedback_id"])}
+                    )
+                for metadata, embedding_vector in zip(
+                    metadata_list, vectors, strict=True
+                ):
+                    if metadata.get("feedback_id"):
+                        unique_key = ["feedback_id", "feedback_input"]
+                        unique_key_value = metadata["feedback_id"]
+                    else:
+                        unique_key = "item_id"
+                        unique_key_value = metadata["item_id"]
+                    self.insert_embedding(
+                        eval_id,
+                        data=metadata,
+                        table_name=table_name,
+                        index_col_type=metadata["input_type"],
+                        column_name="index_column",
+                        unique_key_value=unique_key_value,
+                        unique_key=unique_key,
+                        embedding_vector=embedding_vector,
+                    )
 
             return vectors, metadata_list
 

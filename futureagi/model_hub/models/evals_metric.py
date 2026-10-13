@@ -1,11 +1,12 @@
 import re
 import uuid
+from functools import partial
 from typing import Any, Literal
 
 import structlog
 from django.contrib.postgres.fields import ArrayField
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Q
 from pydantic import BaseModel, validator
 
@@ -473,12 +474,13 @@ class Feedback(ModelBaseModel):
 
     def delete(self, using=None, keep_parents=False):
         super().delete(using=using, keep_parents=keep_parents)
-        # Soft-delete path: collector deletes (queryset/cascade) are covered by
-        # the post_delete receiver in model_hub.signals.
-        tombstone_feedback_vectors(self.id, self.eval_template_id)
+        transaction.on_commit(
+            partial(tombstone_feedback_vectors, self.id),
+            using=self._state.db,
+        )
 
 
-def tombstone_feedback_vectors(feedback_id, eval_template_id):
+def tombstone_feedback_vectors(feedback_id):
     """Revoke few-shot retrieval eligibility for a Feedback record's vectors.
 
     Tombstones ClickHouse ``feedbacks`` rows carrying this record's identity.
@@ -492,7 +494,6 @@ def tombstone_feedback_vectors(feedback_id, eval_template_id):
             db_client.mark_deleted_by_metadata(
                 "feedbacks",
                 {"feedback_id": str(feedback_id)},
-                eval_id=str(eval_template_id) if eval_template_id else None,
             )
         finally:
             db_client.close()

@@ -8,9 +8,11 @@ Also handles cascade soft-delete when Dataset, PromptTemplate, or
 PromptVersion are soft-deleted.
 """
 
+from functools import partial
 from threading import local
 
 import structlog
+from django.db import transaction
 from django.db.models.signals import post_delete, post_save, pre_save
 from django.dispatch import receiver
 
@@ -292,7 +294,7 @@ def cascade_soft_delete_on_prompt_version_deletion(sender, instance, **kwargs):
 
 
 @receiver(post_delete, sender="model_hub.Feedback")
-def tombstone_feedback_vectors_on_delete(sender, instance, **kwargs):
+def tombstone_feedback_vectors_on_delete(sender, instance, using, **kwargs):
     """Revoke vector eligibility on collector-path deletes.
 
     ``Feedback.delete()`` only covers instance deletes (soft-delete saves);
@@ -301,4 +303,7 @@ def tombstone_feedback_vectors_on_delete(sender, instance, **kwargs):
     """
     from model_hub.models.evals_metric import tombstone_feedback_vectors
 
-    tombstone_feedback_vectors(instance.id, instance.eval_template_id)
+    transaction.on_commit(
+        partial(tombstone_feedback_vectors, instance.id),
+        using=using,
+    )

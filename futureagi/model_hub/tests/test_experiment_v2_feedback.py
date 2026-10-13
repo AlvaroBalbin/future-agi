@@ -1563,14 +1563,17 @@ class TestFeedbackVectorLifecycle:
         )
         assert response.status_code == status.HTTP_200_OK
 
-        metadatas = mock_embed.parallel_process_metadata.call_args.kwargs[
-            "metadatas"
-        ]
+        metadatas = mock_embed.parallel_process_metadata.call_args.kwargs["metadatas"]
         assert metadatas["feedback_id"] == str(feedback_per_edt.id)
 
     @patch("agentic_eval.core.database.ch_vector.ClickHouseVectorDB")
     def test_delete_tombstones_feedback_vectors(
-        self, mock_db_cls, db, feedback_per_edt, user_eval_metric
+        self,
+        mock_db_cls,
+        db,
+        feedback_per_edt,
+        user_eval_metric,
+        django_capture_on_commit_callbacks,
     ):
         Feedback.objects.filter(pk=feedback_per_edt.pk).update(
             eval_template=user_eval_metric.template
@@ -1579,12 +1582,12 @@ class TestFeedbackVectorLifecycle:
         mock_client = MagicMock()
         mock_db_cls.return_value = mock_client
 
-        feedback_per_edt.delete()
+        with django_capture_on_commit_callbacks(execute=True):
+            feedback_per_edt.delete()
 
         mock_client.mark_deleted_by_metadata.assert_called_once_with(
             "feedbacks",
             {"feedback_id": str(feedback_per_edt.id)},
-            eval_id=str(user_eval_metric.template.id),
         )
         mock_client.close.assert_called_once()
         feedback_per_edt.refresh_from_db()
@@ -1592,35 +1595,41 @@ class TestFeedbackVectorLifecycle:
 
     @patch("agentic_eval.core.database.ch_vector.ClickHouseVectorDB")
     def test_delete_without_eval_template_tombstones_unscoped(
-        self, mock_db_cls, db, feedback_per_edt
+        self, mock_db_cls, db, feedback_per_edt, django_capture_on_commit_callbacks
     ):
         mock_client = MagicMock()
         mock_db_cls.return_value = mock_client
 
-        feedback_per_edt.delete()
+        with django_capture_on_commit_callbacks(execute=True):
+            feedback_per_edt.delete()
 
         mock_client.mark_deleted_by_metadata.assert_called_once_with(
             "feedbacks",
             {"feedback_id": str(feedback_per_edt.id)},
-            eval_id=None,
         )
 
     @patch("agentic_eval.core.database.ch_vector.ClickHouseVectorDB")
     def test_delete_swallows_clickhouse_failure(
-        self, mock_db_cls, db, feedback_per_edt
+        self, mock_db_cls, db, feedback_per_edt, django_capture_on_commit_callbacks
     ):
         mock_client = MagicMock()
         mock_client.mark_deleted_by_metadata.side_effect = RuntimeError("ch down")
         mock_db_cls.return_value = mock_client
 
-        feedback_per_edt.delete()
+        with django_capture_on_commit_callbacks(execute=True):
+            feedback_per_edt.delete()
 
         feedback_per_edt.refresh_from_db()
         assert feedback_per_edt.deleted is True
 
     @patch("agentic_eval.core.database.ch_vector.ClickHouseVectorDB")
     def test_queryset_delete_tombstones_via_post_delete(
-        self, mock_db_cls, db, feedback_per_edt, user_eval_metric
+        self,
+        mock_db_cls,
+        db,
+        feedback_per_edt,
+        user_eval_metric,
+        django_capture_on_commit_callbacks,
     ):
         """Collector deletes (queryset/cascade) bypass Feedback.delete() and
         fire post_delete — the receiver must tombstone instead."""
@@ -1630,12 +1639,12 @@ class TestFeedbackVectorLifecycle:
         mock_client = MagicMock()
         mock_db_cls.return_value = mock_client
 
-        Feedback.objects.filter(pk=feedback_per_edt.pk).delete()
+        with django_capture_on_commit_callbacks(execute=True):
+            Feedback.objects.filter(pk=feedback_per_edt.pk).delete()
 
         mock_client.mark_deleted_by_metadata.assert_called_once_with(
             "feedbacks",
             {"feedback_id": str(feedback_per_edt.id)},
-            eval_id=str(user_eval_metric.template.id),
         )
 
 
@@ -1648,6 +1657,7 @@ class TestFeedbackUniqueKeySelection:
             lambda self, *a, **k: None,
         ):
             mgr = EmbeddingManager()
+        mgr.db_client = MagicMock()
         mgr.insert_embedding = MagicMock()
         return mgr
 
@@ -1700,9 +1710,7 @@ class TestFeedbackUniqueKeySelection:
         """
         from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
 
-        with patch.object(
-            ClickHouseVectorDB, "__init__", lambda self, *a, **k: None
-        ):
+        with patch.object(ClickHouseVectorDB, "__init__", return_value=None):
             mgr = EmbeddingManager()
         mgr.db_client = MagicMock()
 
@@ -1746,9 +1754,7 @@ class TestMarkDeletedByMetadata:
     def test_scoped_tombstone_sql(self):
         from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
 
-        with patch.object(
-            ClickHouseVectorDB, "__init__", lambda self, *a, **k: None
-        ):
+        with patch.object(ClickHouseVectorDB, "__init__", return_value=None):
             db = ClickHouseVectorDB()
         db.client = MagicMock()
 
@@ -1762,13 +1768,12 @@ class TestMarkDeletedByMetadata:
         assert "eval_id = 'eval-7'" in sql
         assert "has(metadata.key, 'feedback_id')" in sql
         assert "'fb-9'" in sql
+        assert db.client.execute.call_args.kwargs["settings"] == {"mutations_sync": 2}
 
     def test_unscoped_tombstone_sql(self):
         from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
 
-        with patch.object(
-            ClickHouseVectorDB, "__init__", lambda self, *a, **k: None
-        ):
+        with patch.object(ClickHouseVectorDB, "__init__", return_value=None):
             db = ClickHouseVectorDB()
         db.client = MagicMock()
 
@@ -1777,3 +1782,15 @@ class TestMarkDeletedByMetadata:
         sql = db.client.execute.call_args.args[0]
         assert "eval_id" not in sql
         assert "has(metadata.key, 'feedback_id')" in sql
+
+    def test_empty_filters_cannot_tombstone_the_entire_table(self):
+        from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
+
+        with patch.object(ClickHouseVectorDB, "__init__", return_value=None):
+            client = ClickHouseVectorDB()
+        client.client = MagicMock()
+
+        with pytest.raises(ValueError, match="metadata filter"):
+            client.mark_deleted_by_metadata("feedbacks", {})
+
+        client.client.execute.assert_not_called()
