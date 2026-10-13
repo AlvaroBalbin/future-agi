@@ -437,6 +437,9 @@ export type SpanAttributeTopValueApiValue = JsonValueApi;`,
       "TraceObserveColumnConfigApiSettings",
       "TraceObserveColumnConfigApiChoicesMap",
       "TraceObserveColumnConfigApiAnnotators",
+      "EvalRollupSpanApiValue",
+      "EvalRollupEvalApiChoicesMap",
+      "EvalRollupEvalApiAggregate",
     ]) {
       schemas = assertReplace(
         schemas,
@@ -467,6 +470,37 @@ export type ${jsonAlias} = JsonValueApi;`,
         `export type ${rowType} = {[key: string]: { [key: string]: unknown }};`,
         `export type ${rowType} = { [key: string]: JsonValueApi };`,
         `${rowType} → recursive JSON row`,
+      );
+    }
+
+    // Eval rollups use nullable JSON/scalar fields in the wire response. Keep
+    // the generated TypeScript contract aligned with the DRF serializer rather
+    // than requiring clients to pretend omitted values are never explicit null.
+    for (const [field, type] of [
+      ["value", "EvalRollupSpanApiValue"],
+      ["explanation", "string"],
+      ["status", "string"],
+    ]) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        "export interface EvalRollupSpanApi {",
+        `${field}?: ${type};`,
+        `${field}?: ${type} | null;`,
+        `EvalRollupSpanApi.${field} nullable`,
+      );
+    }
+    for (const [field, type] of [
+      ["output_type", "string"],
+      ["template_type", "string"],
+      ["target_type", "EvalRollupEvalApiTargetType"],
+      ["choices_map", "EvalRollupEvalApiChoicesMap"],
+    ]) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        "export interface EvalRollupEvalApi {",
+        `${field}?: ${type};`,
+        `${field}?: ${type} | null;`,
+        `EvalRollupEvalApi.${field} nullable`,
       );
     }
 
@@ -784,6 +818,36 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       "$1jsonValueSchema.describe('Any valid JSON value.'),",
       "DashboardFilterValueOption zod value → recursive JSON value",
     );
+
+    const traceDetailResponse =
+      "export const TracerTraceReadResponse = zod.object({";
+    for (const [field, replacement] of [
+      [
+        '"value": zod.object({\n\n}).passthrough().optional().describe(\'Any valid JSON value.\'),',
+        '"value": jsonValueSchema.nullish().describe(\'Any valid JSON value.\'),',
+      ],
+      [
+        '"choices_map": zod.object({\n\n}).passthrough().optional().describe(\'Any valid JSON value.\'),',
+        '"choices_map": jsonValueSchema.nullish().describe(\'Any valid JSON value.\'),',
+      ],
+      [
+        '"aggregate": zod.object({\n\n}).passthrough().describe(\'Any valid JSON value.\'),',
+        '"aggregate": jsonValueSchema.describe(\'Any valid JSON value.\'),',
+      ],
+      ['"output_type": zod.string().min(1).optional(),', '"output_type": zod.string().min(1).nullish(),'],
+      ['"template_type": zod.string().min(1).optional(),', '"template_type": zod.string().min(1).nullish(),'],
+      ['"target_type": zod.enum([\'span\', \'trace\']).optional(),', '"target_type": zod.enum([\'span\', \'trace\']).nullish(),'],
+      ['"explanation": zod.string().min(1).optional(),', '"explanation": zod.string().min(1).nullish(),'],
+      ['"status": zod.string().min(1).optional(),', '"status": zod.string().min(1).nullish(),'],
+    ]) {
+      zod = assertReplaceInNamedBlock(
+        zod,
+        traceDetailResponse,
+        field,
+        replacement,
+        `TracerTraceReadResponse eval rollup ${field}`,
+      );
+    }
 
     const listResponseExports = [
       "TracerTraceListTracesResponse",

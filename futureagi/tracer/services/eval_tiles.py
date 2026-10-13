@@ -7,6 +7,7 @@ turn already-authorized eval rows into stable display values.
 
 from __future__ import annotations
 
+import ast
 import json
 import math
 from collections import defaultdict
@@ -80,6 +81,10 @@ def normalize_verdict(value: Any) -> str | None:
 
     if isinstance(value, bool):
         return "pass" if value else "fail"
+    # ClickHouse Nullable(UInt8) values arrive through some drivers as 0/1
+    # integers rather than Python bools.
+    if isinstance(value, int) and value in (0, 1):
+        return "pass" if value else "fail"
     if isinstance(value, str):
         normalized = value.strip().lower()
         if normalized in {"pass", "true"}:
@@ -100,6 +105,26 @@ def _choice_values(row: Mapping[str, Any]) -> list[str]:
             raw = json.loads(raw) if raw.lstrip().startswith("[") else []
         except json.JSONDecodeError:
             raw = []
+    if not raw:
+        scalar = row.get("output_str")
+        if isinstance(scalar, str) and scalar.strip() and scalar != "ERROR":
+            parsed_scalar: Any = scalar
+            if scalar.lstrip().startswith(("{", "[")):
+                try:
+                    parsed_scalar = json.loads(scalar)
+                except json.JSONDecodeError:
+                    try:
+                        parsed_scalar = ast.literal_eval(scalar)
+                    except (ValueError, SyntaxError):
+                        parsed_scalar = scalar
+            if isinstance(parsed_scalar, dict):
+                parsed_scalar = (
+                    parsed_scalar.get("choice")
+                    or parsed_scalar.get("label")
+                    or parsed_scalar.get("value")
+                    or parsed_scalar.get("choices")
+                )
+            raw = parsed_scalar if isinstance(parsed_scalar, list) else [parsed_scalar]
     if not isinstance(raw, (list, tuple, set)):
         return []
     return [str(value) for value in raw if value not in (None, "")]
@@ -154,6 +179,13 @@ def _verdict_value(row: Mapping[str, Any]) -> str | None:
         verdict = normalize_verdict(row.get(key))
         if verdict is not None:
             return verdict
+    output_float = row.get("output_float")
+    if (
+        isinstance(output_float, (int, float))
+        and not isinstance(output_float, bool)
+        and math.isfinite(output_float)
+    ):
+        return "pass" if output_float >= 0.5 else "fail"
     return None
 
 
@@ -388,12 +420,19 @@ def count_column_metadata(
     order, so a column keeps labels its template no longer declares.
     """
 
-    target_types: dict[str, str] = {}
+    target_type_values: dict[str, set[str]] = defaultdict(set)
     for row in eval_rows:
         config_id = str(row.get("eval_config_id") or "")
         target_type = row.get("target_type")
         if config_id and target_type in {"span", "trace"}:
-            target_types[config_id] = target_type
+            target_type_values[config_id].add(target_type)
+    # A config can be scheduled for both span- and trace-target rows. Do not
+    # let iteration order assign a misleading single glyph to a mixed column.
+    target_types = {
+        config_id: next(iter(values))
+        for config_id, values in target_type_values.items()
+        if len(values) == 1
+    }
 
     observed: dict[str, list[str]] = {}
     for cells in eval_map.values():

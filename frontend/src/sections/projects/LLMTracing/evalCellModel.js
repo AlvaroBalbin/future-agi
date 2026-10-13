@@ -30,6 +30,9 @@ const isCountObject = (value) =>
     (count) => typeof count === "number" && Number.isFinite(count),
   );
 
+const normalizeChoiceTone = (choice) =>
+  typeof choice === "string" ? choice : choice?.tone || "neutral";
+
 export const buildEvalCellModel = (value, outputType, choicesMap = {}) => {
   if (isMarker(value)) return { kind: "marker", marker: value };
 
@@ -47,7 +50,7 @@ export const buildEvalCellModel = (value, outputType, choicesMap = {}) => {
             : label === "fail"
               ? "error"
               : "neutral"
-          : choicesMap?.[label] || "neutral",
+          : normalizeChoiceTone(choicesMap?.[label]),
       }));
     return { kind: "counts", chips };
   }

@@ -65645,6 +65645,7 @@ export const TracerTraceVoiceCallDetailResponse = zod.object({
       ),
     ),
     eval_outputs: zod.record(zod.string(), zod.unknown()),
+    eval_rollup: zod.record(zod.string(), zod.unknown()).optional(),
     call_execution_id: zod.string().min(1).nullish(),
     test_execution_id: zod.string().min(1).nullish(),
     scenario_id: zod.string().min(1).nullish(),
@@ -65706,30 +65707,23 @@ export const TracerTraceReadResponse = zod.object({
               zod.object({
                 eval_config_id: zod.string().min(1),
                 eval_name: zod.string().min(1),
-                output_type: zod.string().min(1).optional(),
-                template_type: zod.string().min(1).optional(),
-                target_type: zod.enum(["span", "trace"]).optional(),
-                choices_map: zod
-                  .object({})
-                  .passthrough()
-                  .optional()
+                output_type: zod.string().min(1).nullish(),
+                template_type: zod.string().min(1).nullish(),
+                target_type: zod.enum(["span", "trace"]).nullish(),
+                choices_map: jsonValueSchema
+                  .nullish()
                   .describe("Any valid JSON value."),
-                aggregate: zod
-                  .object({})
-                  .passthrough()
-                  .describe("Any valid JSON value."),
+                aggregate: jsonValueSchema.describe("Any valid JSON value."),
                 spans: zod.array(
                   zod.object({
                     span_id: zod.string().min(1),
                     span_name: zod.string().optional(),
-                    value: zod
-                      .object({})
-                      .passthrough()
-                      .optional()
+                    value: jsonValueSchema
+                      .nullish()
                       .describe("Any valid JSON value."),
-                    explanation: zod.string().min(1).optional(),
+                    explanation: zod.string().min(1).nullish(),
                     error: zod.boolean().optional(),
-                    status: zod.string().min(1).optional(),
+                    status: zod.string().min(1).nullish(),
                     eval_config_id: zod.string().optional(),
                   }),
                 ),

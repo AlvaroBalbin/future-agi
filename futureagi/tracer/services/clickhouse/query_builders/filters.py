@@ -2818,8 +2818,25 @@ class ClickHouseFilterBuilder:
         _, eval_not_deleted = self._eval_logger_source(
             "latest_eval", include_cdc_tombstone_guard=True
         )
+        _, physical_eval_not_deleted = self._eval_logger_source(
+            "physical_eval", include_cdc_tombstone_guard=True
+        )
         eval_live_projection = ", ".join(
             f"eval_scan.{column.strip()}" for column in eval_live_columns.split(",")
+        )
+        status_projection = (
+            "'completed' AS status"
+            if eval_table.endswith("_v2")
+            else "eval_scan.status AS status"
+        )
+        completed_predicate = (
+            "physical_eval.error = 0 "
+            "AND ifNull(physical_eval.output_str, '') != 'ERROR' "
+            "AND ifNull(physical_eval.status, '') NOT IN "
+            "('pending', 'running', 'skipped', 'errored')"
+        )
+        selected_completed_predicate = completed_predicate.replace(
+            "physical_eval.", "latest_eval."
         )
 
         # PERF + correctness: do not use table-level FINAL (it can merge the
@@ -2841,6 +2858,13 @@ class ClickHouseFilterBuilder:
             negate_outer: bool = False,
         ) -> str:
             outer_operator = "NOT IN" if negate_outer else "IN"
+            # Nullability and value filters both follow the result the list
+            # tile displays: the newest completed row per span/config.
+            partition_completion = completed_predicate
+            selected_partition_completion = partition_completion.replace(
+                "physical_eval.", "latest_eval."
+            )
+            completed_match_guard = f"AND ({selected_partition_completion})"
             candidate_filter = (
                 self._candidate_span_entity_filter(
                     "eval_scan.trace_id", f"eval_scan.{inner_col}"
@@ -2851,11 +2875,20 @@ class ClickHouseFilterBuilder:
             return (
                 f"{outer_col} {outer_operator} ("
                 f"SELECT {inner_select} FROM ("
+                "SELECT physical_eval.*, row_number() OVER ("
+                "PARTITION BY physical_eval.trace_id, "
+                "physical_eval.custom_eval_config_id, "
+                "physical_eval.observation_span_id, ("
+                f"{partition_completion}"
+                ") ORDER BY physical_eval.created_at DESC, "
+                "toString(physical_eval.id) DESC"
+                ") AS completed_rank FROM ("
                 "SELECT eval_scan.id, eval_scan.trace_id, "
-                "eval_scan.observation_span_id, eval_scan.output_bool, "
+                "eval_scan.observation_span_id, eval_scan.custom_eval_config_id, "
+                "eval_scan.created_at, eval_scan.output_bool, "
                 "eval_scan.output_float, eval_scan.output_str, "
                 "eval_scan.output_str_list, eval_scan.error, "
-                f"{eval_live_projection} "
+                f"{status_projection}, {eval_live_projection} "
                 f"FROM {eval_table} AS eval_scan "
                 f"WHERE eval_scan.custom_eval_config_id IN %({param_cfg})s "
                 f"{eval_date_clause}"
@@ -2863,9 +2896,14 @@ class ClickHouseFilterBuilder:
                 f"{candidate_filter} "
                 f"ORDER BY eval_scan.{eval_version_col} DESC "
                 "LIMIT 1 BY eval_scan.id"
+                ") AS physical_eval "
+                f"WHERE {physical_eval_not_deleted}"
                 ") AS latest_eval "
                 f"WHERE {eval_not_deleted} "
+                f"AND (NOT ({selected_partition_completion}) "
+                "OR latest_eval.completed_rank = 1) "
                 f"{error_clause} "
+                f"{completed_match_guard} "
                 f"AND {match_condition}"
                 f")"
             )

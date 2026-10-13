@@ -103036,6 +103036,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           additionalProperties: true,
         },
+        eval_rollup: {
+          title: "Eval rollup",
+          type: "object",
+          additionalProperties: true,
+          "x-nullable": true,
+        },
         call_execution_id: {
           title: "Call execution id",
           type: "string",

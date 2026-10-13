@@ -2397,10 +2397,10 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             # non-Observe list continues to use its percentage pivot below.
             count_projection = """
             , countIf(
-                output_bool = 1 AND error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+                if(isNull(output_bool), output_float >= 0.5, output_bool = 1) AND error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
             ) AS pass_count
             , countIf(
-                output_bool = 0 AND error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
+                if(isNull(output_bool), output_float < 0.5, output_bool = 0) AND error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
             ) AS fail_count
             , argMax(target_type, created_at) AS target_type
             """
@@ -2469,7 +2469,11 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             anyIf(skipped_reason, status = 'skipped') AS skipped_reason,
             count() AS eval_count,
             groupArrayIf(
-                output_str_list,
+                if(
+                    notEmpty(JSONExtract(output_str_list, 'Array(String)')),
+                    JSONExtract(output_str_list, 'Array(String)'),
+                    if(ifNull(output_str, '') != '', [ifNull(output_str, '')], [])
+                ),
                 error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
             ) AS str_lists
             {count_projection}

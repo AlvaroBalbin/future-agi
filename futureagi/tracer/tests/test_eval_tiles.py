@@ -227,11 +227,13 @@ def test_rollup_reads_choices_under_the_detail_normalized_output_type():
     assert helpful["aggregate"] == {"pass": 0, "fail": 1}
 
 
-def test_normalize_verdict_only_maps_boolean_verdicts():
+def test_normalize_verdict_maps_clickhouse_integer_booleans():
     assert normalize_verdict(" Pass ") == "pass"
     assert normalize_verdict("fail") == "fail"
     assert normalize_verdict(True) == "pass"
     assert normalize_verdict(False) == "fail"
+    assert normalize_verdict(1) == "pass"
+    assert normalize_verdict(0) == "fail"
     assert normalize_verdict(0.75) is None
 
 
@@ -257,3 +259,13 @@ def test_count_column_metadata_reads_target_types_and_observed_choices():
 
     assert target_types == {"tone": "span", "gap": "trace"}
     assert observed == {"tone": ["neutral", "apologetic", "joy"]}
+
+    mixed_targets, _ = count_column_metadata(
+        [
+            {"eval_config_id": "tone", "target_type": "span"},
+            {"eval_config_id": "tone", "target_type": "trace"},
+        ],
+        {},
+        {"tone": "choices"},
+    )
+    assert mixed_targets == {}

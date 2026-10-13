@@ -48,6 +48,16 @@ describe("buildEvalCellModel", () => {
     expect(model.chips[1]).toMatchObject({ tone: "neutral" });
   });
 
+  it("normalizes object-valued choice tones", () => {
+    const model = buildEvalCellModel(
+      { safe: 1 },
+      "choices",
+      { safe: { tone: "success" } },
+    );
+
+    expect(model.chips[0]).toMatchObject({ tone: "success" });
+  });
+
   it("preserves lifecycle and error markers instead of converting them to counts", () => {
     expect(buildEvalCellModel({ error: true }, "Pass/Fail")).toMatchObject({
       kind: "marker",

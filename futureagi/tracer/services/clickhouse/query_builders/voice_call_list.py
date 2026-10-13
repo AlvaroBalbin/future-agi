@@ -1269,14 +1269,14 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         # appended after ``str_lists`` so the pivot's positional fallbacks hold.
         completed = (
             "latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' "
-            "AND latest_status NOT IN ('pending', 'running', 'skipped', 'errored')"
+            "AND ifNull(latest_status, '') NOT IN ('pending', 'running', 'skipped', 'errored')"
         )
         count_projection = ""
         count_inner_projection = ""
         if count_mode:
             count_projection = f"""
-            , countIf(latest_output_bool = 1 AND {completed}) AS pass_count
-            , countIf(latest_output_bool = 0 AND {completed}) AS fail_count
+            , countIf(if(isNull(latest_output_bool), latest_output_float >= 0.5, latest_output_bool = 1) AND {completed}) AS pass_count
+            , countIf(if(isNull(latest_output_bool), latest_output_float < 0.5, latest_output_bool = 0) AND {completed}) AS fail_count
             , argMax(latest_target_type, latest_created_at) AS target_type
             """
             count_inner_projection = f""",
@@ -1322,22 +1322,26 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             -- which json.dumps(allow_nan=False) rejects. NULL serializes as null.
             ifNotFinite(avgIf(
                 latest_output_float,
-                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND latest_status NOT IN ('pending', 'running', 'skipped', 'errored')
+                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND ifNull(latest_status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
             ), NULL) AS avg_score,
             ifNotFinite(avgIf(
                 CASE WHEN latest_output_bool = 1 THEN 100.0 ELSE 0.0 END,
-                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND latest_status NOT IN ('pending', 'running', 'skipped', 'errored')
+                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND ifNull(latest_status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
             ), NULL) AS pass_rate,
             countIf(
-                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND latest_status NOT IN ('pending', 'running', 'skipped', 'errored')
+                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND ifNull(latest_status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
             ) AS success_count,
             countIf(
                 latest_error = 1 OR ifNull(latest_output_str, '') = 'ERROR' OR latest_status = 'errored'
             ) AS error_count,
             count() AS eval_count,
             groupArrayIf(
-                latest_output_str_list,
-                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND latest_status NOT IN ('pending', 'running', 'skipped', 'errored')
+                if(
+                    notEmpty(JSONExtract(latest_output_str_list, 'Array(String)')),
+                    JSONExtract(latest_output_str_list, 'Array(String)'),
+                    if(ifNull(latest_output_str, '') != '', [ifNull(latest_output_str, '')], [])
+                ),
+                latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND ifNull(latest_status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
             ) AS str_lists,
             countIf(latest_status = 'skipped') AS skipped_count,
             countIf(latest_status = 'running') AS running_count,

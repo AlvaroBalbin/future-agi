@@ -9,17 +9,26 @@ const printableValue = (value) => {
 
 const BreakdownRow = ({ row, onSelectSpan }) => {
   const [showExplanation, setShowExplanation] = useState(false);
+  const displayValue = row.error
+    ? "Error"
+    : row.status === "skipped"
+      ? row.skipped_reason || "Skipped"
+      : row.status || printableValue(row.value);
   return (
     <Box sx={{ py: 0.75, borderTop: "1px solid", borderColor: "divider" }}>
       <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-        <Button size="small" onClick={() => onSelectSpan?.(row.span_id)}>
+        <Button
+          size="small"
+          disabled={!onSelectSpan}
+          onClick={() => onSelectSpan?.(row.span_id)}
+        >
           View span
         </Button>
         <Typography variant="body2" sx={{ flex: 1 }}>
           {row.span_name || row.span_id}
         </Typography>
         <Typography color={row.error ? "error.main" : "text.secondary"} variant="body2">
-          {row.error ? "Error" : printableValue(row.value)}
+          {displayValue}
         </Typography>
       </Box>
       {row.explanation && (

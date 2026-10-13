@@ -29825,6 +29825,10 @@ export type TraceVoiceCallDetailResultApiEvalOutputs = {
   [key: string]: unknown;
 };
 
+export type TraceVoiceCallDetailResultApiEvalRollup = {
+  [key: string]: unknown;
+};
+
 export type TraceVoiceCallDetailResultApiScenarioGraph = {
   [key: string]: unknown;
 };
@@ -29883,6 +29887,7 @@ export interface TraceVoiceCallDetailResultApi {
   call_metadata: TraceVoiceCallDetailResultApiCallMetadata;
   observation_span: TraceVoiceCallDetailResultApiObservationSpanItem[];
   eval_outputs: TraceVoiceCallDetailResultApiEvalOutputs;
+  eval_rollup?: TraceVoiceCallDetailResultApiEvalRollup;
   /** @minLength 1 */
   call_execution_id?: string | null;
   /** @minLength 1 */
@@ -29930,31 +29935,31 @@ export const EvalRollupEvalApiTargetType = {
 /**
  * Any valid JSON value.
  */
-export type EvalRollupSpanApiValue = { [key: string]: unknown };
+export type EvalRollupSpanApiValue = JsonValueApi;
 
 export interface EvalRollupSpanApi {
   /** @minLength 1 */
   span_id: string;
   span_name?: string;
   /** Any valid JSON value. */
-  value?: EvalRollupSpanApiValue;
+  value?: EvalRollupSpanApiValue | null;
   /** @minLength 1 */
-  explanation?: string;
+  explanation?: string | null;
   error?: boolean;
   /** @minLength 1 */
-  status?: string;
+  status?: string | null;
   eval_config_id?: string;
 }
 
 /**
  * Any valid JSON value.
  */
-export type EvalRollupEvalApiChoicesMap = { [key: string]: unknown };
+export type EvalRollupEvalApiChoicesMap = JsonValueApi;
 
 /**
  * Any valid JSON value.
  */
-export type EvalRollupEvalApiAggregate = { [key: string]: unknown };
+export type EvalRollupEvalApiAggregate = JsonValueApi;
 
 export interface EvalRollupEvalApi {
   /** @minLength 1 */
@@ -29962,12 +29967,12 @@ export interface EvalRollupEvalApi {
   /** @minLength 1 */
   eval_name: string;
   /** @minLength 1 */
-  output_type?: string;
+  output_type?: string | null;
   /** @minLength 1 */
-  template_type?: string;
-  target_type?: EvalRollupEvalApiTargetType;
+  template_type?: string | null;
+  target_type?: EvalRollupEvalApiTargetType | null;
   /** Any valid JSON value. */
-  choices_map?: EvalRollupEvalApiChoicesMap;
+  choices_map?: EvalRollupEvalApiChoicesMap | null;
   /** Any valid JSON value. */
   aggregate: EvalRollupEvalApiAggregate;
   spans: EvalRollupSpanApi[];

@@ -384,7 +384,7 @@ class TestEvalScoreCompilation:
         )
         assert "output_float IS NOT NULL" in where
         assert "trace_id IN (" in where
-        assert "NOT IN" not in where
+        assert "latest_eval.completed_rank = 1" in where
 
 
 # ===========================================================================
@@ -466,9 +466,11 @@ class TestEvalChoiceCompilation:
             ClickHouseFilterBuilder, _eval_filter(eval_id, "in", ["a", "b", "c"])
         )
         assert " OR " in where
-        # The combined membership block sits inside the AND-guarded subquery,
-        # so the guards precede a parenthesised OR group.
-        assert "AND error = 0 AND ((" in where
+        # The completed-result and error guards precede one parenthesised OR
+        # group. Keep this structural assertion independent of the physical
+        # version-collapse predicates that now sit before the guards.
+        assert "AND error = 0 AND (latest_eval.error = 0" in where
+        assert "AND ((has(" in where
         # Three membership checks OR-joined.
         assert where.count("has(") == 3
 

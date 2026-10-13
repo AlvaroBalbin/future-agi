@@ -690,6 +690,10 @@ class TraceVoiceCallDetailResultSerializer(serializers.Serializer):
         child=serializers.DictField(child=JsonValueField(allow_null=True))
     )
     eval_outputs = JsonObjectField()
+    # Voice detail reuses the additive per-span rollup shape. Keep this
+    # response field documented even though the shared rollup serializer is
+    # declared below the voice serializer in this module.
+    eval_rollup = JsonObjectField(required=False, allow_null=True)
 
     call_execution_id = serializers.CharField(required=False, allow_null=True)
     test_execution_id = serializers.CharField(required=False, allow_null=True)

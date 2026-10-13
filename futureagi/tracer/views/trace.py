@@ -1,3 +1,4 @@
+import ast
 import concurrent.futures
 import json
 import math
@@ -160,7 +161,9 @@ from tracer.services.clickhouse.v2.trace_detail_reads import (
     TraceDetailReadUnavailable,
     read_trace_detail,
 )
+from model_hub.utils.eval_list import derive_output_type
 from tracer.services.eval_tiles import (
+    build_eval_rollup,
     count_column_metadata,
     select_latest_completed,
 )
@@ -692,6 +695,34 @@ def _pivot_voice_detail_eval_rows(
                         raw_choices = json.loads(raw_choices)
                     except (json.JSONDecodeError, TypeError):
                         raw_choices = None
+                if not raw_choices:
+                    scalar_choice = eval_row.get("output_str")
+                    if (
+                        isinstance(scalar_choice, str)
+                        and scalar_choice.strip()
+                        and scalar_choice != "ERROR"
+                    ):
+                        parsed_choice: Any = scalar_choice
+                        if scalar_choice.lstrip().startswith(("{", "[")):
+                            try:
+                                parsed_choice = json.loads(scalar_choice)
+                            except json.JSONDecodeError:
+                                try:
+                                    parsed_choice = ast.literal_eval(scalar_choice)
+                                except (ValueError, SyntaxError):
+                                    parsed_choice = scalar_choice
+                        if isinstance(parsed_choice, dict):
+                            parsed_choice = (
+                                parsed_choice.get("choice")
+                                or parsed_choice.get("label")
+                                or parsed_choice.get("value")
+                                or parsed_choice.get("choices")
+                            )
+                        raw_choices = (
+                            parsed_choice
+                            if isinstance(parsed_choice, list)
+                            else [parsed_choice]
+                        )
                 if isinstance(raw_choices, (list, tuple)) and raw_choices:
                     parsed_choice_lists.append([str(value) for value in raw_choices])
 
@@ -716,11 +747,19 @@ def _pivot_voice_detail_eval_rows(
                 and not isinstance(value, bool)
                 and math.isfinite(value)
             ]
-            bool_values = [
-                bool(value)
-                for value in (row.get("output_bool") for row in completed)
-                if value is not None
-            ]
+            bool_values = []
+            for row in completed:
+                output_bool = row.get("output_bool")
+                if output_bool is not None:
+                    bool_values.append(bool(output_bool))
+                    continue
+                output_float = row.get("output_float")
+                if (
+                    isinstance(output_float, (int, float))
+                    and not isinstance(output_float, bool)
+                    and math.isfinite(output_float)
+                ):
+                    bool_values.append(output_float >= 0.5)
             pivoted[config_id] = {
                 "avg_score": (
                     round(100.0 * sum(float_values) / len(float_values), 2)
@@ -4173,6 +4212,39 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         eval_outputs = {}
         trace_evals = _pivot_voice_detail_eval_rows(detail.evals)
+        rollup_config_lookup = {}
+        for config in eval_configs:
+            config_id = str(config.id)
+            template = getattr(config, "eval_template", None)
+            template_config = getattr(template, "config", {}) or {}
+            rollup_config_lookup[config_id] = {
+                "name": getattr(config, "name", None)
+                or (getattr(template, "name", None) if template else None)
+                or config_id,
+                "output_type": derive_output_type(template) if template else None,
+                "template_type": getattr(template, "template_type", None)
+                if template
+                else None,
+                "choices": list(getattr(template, "choices", None) or [])
+                if template
+                else [],
+                "choices_map": dict(template_config.get("choices_map", {}) or {}),
+            }
+        if detail.eval_unavailable:
+            eval_rollup = {
+                "scope": "trace",
+                "evals": [],
+                "error": True,
+            }
+        else:
+            eval_rollup = build_eval_rollup(
+                detail.evals,
+                rollup_config_lookup,
+                root_span_id,
+            ).get(
+                root_span_id,
+                {"scope": "trace", "evals": []},
+            )
 
         for config in eval_configs:
             config_id = str(config.id)
@@ -4227,11 +4299,14 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         else scores.get("avg_score")
                     )
                     if output_type == "Pass/Fail":
-                        metric_entry["output"] = (
-                            "Pass"
-                            if isinstance(score_val, (int, float)) and score_val > 0
-                            else "Fail"
-                        )
+                        if score_val == 100:
+                            metric_entry["output"] = "Pass"
+                        elif score_val == 0:
+                            metric_entry["output"] = "Fail"
+                        else:
+                            # Mixed per-span results must not be collapsed to
+                            # Pass merely because one span passed.
+                            metric_entry["output"] = score_val
                     else:
                         # The bounded reducer uses the list endpoint's
                         # pre-scaled 0..100 score contract.
@@ -4260,6 +4335,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "recording_available": self._recording_available(recording),
             "call_metadata": metadata,
             "observation_span": observation_span,
+            "eval_rollup": eval_rollup,
             "eval_outputs": eval_outputs,
             "turn_count": voice_metrics.get("turn_count"),
             "talk_ratio": voice_metrics.get("talk_ratio"),
