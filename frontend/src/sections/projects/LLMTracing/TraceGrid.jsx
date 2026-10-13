@@ -133,6 +133,7 @@ const TraceGrid = React.forwardRef(
     );
     const agTheme = useAgThemeWith(gridThemeParams);
     const [dateInterval] = useUrlState("dateInterval", "day");
+    const [, setEvalFocus, removeEvalFocus] = useUrlState("evalFocus", false);
     const { openReplaySessionDrawer, currentStep, validatedSteps } =
       useReplaySessionsStoreShallow((state) => ({
         openReplaySessionDrawer: state.openReplaySessionDrawer,
@@ -163,9 +164,12 @@ const TraceGrid = React.forwardRef(
     const gridElementRef = useRef(null);
     const {
       beginPageLoad,
+      endUnknown,
+      frontierPage,
+      hasMore,
       page,
-      pageCount,
       pageSize,
+      provenNext,
       changePageSize,
       finishPageLoad,
       goToPage,
@@ -187,6 +191,14 @@ const TraceGrid = React.forwardRef(
 
     const inFlightPageLoads = useRef(new Map());
     const cursorPagination = useRef(createListCursorPagination());
+    // Gate the boundary on whether its cursor is still remembered — reset(),
+    // an LRU eviction, or a filter/date/page-size change can all make a page
+    // that was genuinely visited unreachable again. `frontierPage` is
+    // 1-indexed (matches the UI); `canReachPage` takes the same 0-indexed
+    // convention as `requestParams`.
+    const furthestPage = cursorPagination.current.canReachPage(frontierPage - 1)
+      ? frontierPage
+      : 0;
     const { showMetricsIds, reset: resetMetricIds } =
       useShallowToggleAnnotationsStore((state) => ({
         showMetricsIds: state.showMetricsIds,
@@ -547,6 +559,7 @@ const TraceGrid = React.forwardRef(
                 request,
                 rows,
                 isLastPage,
+                metadata,
               });
 
               finishRequest({
@@ -778,6 +791,10 @@ const TraceGrid = React.forwardRef(
           //disguard clicks on empty rows
           return;
         }
+        // A regular grid click must not inherit the one-shot eval focus from
+        // a previous eval-cell click. Use removeValue rather than serializing
+        // a null query value so shared URLs stay clean.
+        removeEvalFocus();
         if (event?.column?.colId === "status") return;
         if (RENDERER_CONFIG.tagColumns.includes(event?.column?.getColId()))
           return;
@@ -821,6 +838,11 @@ const TraceGrid = React.forwardRef(
         // cross-project user page) an unpinned read serves the newest copy
         // of this trace id in any project.
         const rowProjectId = event.data.project_id;
+        const sourceColumn =
+          event.column?.getColDef?.()?.context?.sourceColumn;
+        if (sourceColumn?.groupBy === "Evaluation Metrics") {
+          setEvalFocus(true);
+        }
         setTraceDetailDrawerOpen({
           traceId: traceId,
           ...(rowProjectId ? { projectId: rowProjectId } : {}),
@@ -829,7 +851,7 @@ const TraceGrid = React.forwardRef(
 
         // trackEvent(Events.observeTraceidClicked);
       },
-      [filters, setTraceDetailDrawerOpen],
+      [filters, removeEvalFocus, setEvalFocus, setTraceDetailDrawerOpen],
     );
 
     const shouldDisable = useMemo(() => {
@@ -963,8 +985,11 @@ const TraceGrid = React.forwardRef(
           }
           loading={isPageLoading}
           page={page}
-          pageCount={pageCount}
           pageSize={pageSize}
+          endUnknown={endUnknown}
+          furthestPage={furthestPage}
+          hasMore={hasMore}
+          provenNext={provenNext}
           onPageChange={goToPage}
           onPageSizeChange={changePageSize}
         />
