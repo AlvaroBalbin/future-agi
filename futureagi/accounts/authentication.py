@@ -43,6 +43,7 @@ from tfc.utils.api_errors import (
 )
 
 logger = structlog.get_logger(__name__)
+security_logger = structlog.get_logger("saml2_auth.security")
 
 # Rate limiting settings with defaults
 MAX_LOGIN_ATTEMPTS_PER_HOUR: int = getattr(settings, "MAX_LOGIN_ATTEMPTS_PER_HOUR", 10)
@@ -177,12 +178,12 @@ class APIKeyAuthentication(BaseAuthentication):
                 # Set workspace context after JWT authentication
                 self._set_workspace_context(request, user)
                 return user, token
-            except (
-                PermissionDenied,
-                DatabaseError,
-                InterfaceError,
-                SamlCredentialInvalid,
-            ):
+            except SamlCredentialInvalid as exc:
+                security_logger.warning(
+                    "saml_credential_denied", reason=exc.reason, transport="http"
+                )
+                raise
+            except (PermissionDenied, DatabaseError, InterfaceError):
                 raise  # Authorization denials and database failures are not bad tokens.
             except Exception as e:
                 traceback.print_exc()
@@ -949,6 +950,24 @@ def decrypt_message(encrypted_message: str) -> dict[str, Any]:
         raise AuthenticationFailed("Invalid token format") from ex
 
 
+def _touch_non_saml_access_token(token_id, user_id, now):
+    """One-query liveness check; even a poisoned cache cannot authorize SAML."""
+    return (
+        AuthToken.objects.filter(
+            id=token_id,
+            user_id=user_id,
+            user__is_active=True,
+            auth_type=AuthTokenType.ACCESS.value,
+            is_active=True,
+            last_used_at__gte=now
+            - timedelta(minutes=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES),
+        )
+        .exclude(auth_origin=AuthTokenOrigin.SAML)
+        .update(last_used_at=now)
+        == 1
+    )
+
+
 def decode_token(token: str, *, transport: str = "http"):
     try:
         if not token:
@@ -959,6 +978,34 @@ def decode_token(token: str, *, transport: str = "http"):
         token_id = decrypted_token_obj.get("id")
         if not user_id:
             raise AuthenticationFailed("Invalid user id")
+
+        now = timezone.now()
+        cache_key = f"access_token_{token_id}"
+        cache_data = cache.get(cache_key)
+        # Older pods may cache SAML as ordinary. Only this code writes the
+        # versioned marker, after authoritative classification and validation.
+        # Keep the existing cache key so all revocation paths still evict it.
+        if cache_data and cache_data.get("non_saml_v1") is True:
+            user = cache_data.get("user")
+            if (
+                user is not None
+                and str(user.pk) == str(user_id)
+                and user.is_active
+                and cache_data.get("token") == token
+                and _touch_non_saml_access_token(token_id, user_id, now)
+            ):
+                if "organization" not in user._state.fields_cache:
+                    user = User.objects.select_related("organization").get(pk=user.pk)
+                cache.set(
+                    cache_key,
+                    {"token": token, "user": user, "non_saml_v1": True},
+                    timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
+                )
+                return user, token, None
+
+        # Legacy and failed cache hits must be reclassified, not promoted.
+        if cache_data:
+            cache.delete(cache_key)
         token_row = (
             AuthToken.objects.filter(id=token_id)
             .values(
@@ -977,7 +1024,6 @@ def decode_token(token: str, *, transport: str = "http"):
         if token_row is None:
             raise AuthenticationFailed("Invalid auth token")
         if token_row["auth_origin"] == AuthTokenOrigin.SAML:
-            now = timezone.now()
             credential = validate_saml_credential(
                 token_row, user_id, now=now, transport=transport
             )
@@ -990,63 +1036,44 @@ def decode_token(token: str, *, transport: str = "http"):
             ):
                 raise SamlCredentialInvalid("token_inactive")
             return user, token, credential
-        cache_data = cache.get(f"access_token_{token_id}")
-
-        if cache_data:
-            user = cache_data.get("user")
-            token = cache_data.get("token")
-            # Ensure organization is loaded to prevent sync-in-async errors later.
-            if "organization" not in user._state.fields_cache:
-                user = User.objects.select_related("organization").get(pk=user.pk)
-            cache.set(
-                f"access_token_{token_id}",
-                {"token": token, "user": user},
-                timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
-            )
-            AuthToken.objects.filter(id=token_id).update(last_used_at=timezone.now())
-
-            return user, token, None
-
-        user = User.objects.select_related("organization").get(
-            id=user_id, is_active=True
-        )
-
-        try:
-            auth_token_obj = AuthToken.objects.get(
-                id=token_id, auth_type=AuthTokenType.ACCESS.value
-            )
-        except AuthToken.DoesNotExist as e:
-            raise AuthenticationFailed("Invalid auth token") from e
-
-        if not auth_token_obj.is_active:
+        if (
+            str(token_row["user_id"]) != str(user_id)
+            or token_row["auth_type"] != AuthTokenType.ACCESS.value
+        ):
+            raise AuthenticationFailed("Invalid auth token")
+        if not token_row["is_active"]:
             raise AuthenticationFailed("Access token expired")
 
-        # Check if token has expired due to inactivity
-        expiration_threshold = timezone.now() - timedelta(
+        expiration_threshold = now - timedelta(
             minutes=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES
         )
         if (
-            auth_token_obj.last_used_at is None
-            or auth_token_obj.last_used_at < expiration_threshold
+            token_row["last_used_at"] is None
+            or token_row["last_used_at"] < expiration_threshold
         ):
-            auth_token_obj.is_active = False
-            auth_token_obj.save()
+            # Do not deactivate a token concurrently touched by a live request.
+            AuthToken.objects.filter(
+                id=token_id, last_used_at=token_row["last_used_at"]
+            ).update(is_active=False)
             raise AuthenticationFailed(
                 f"Access token expired due to inactivity since {AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES} minutes"
             )
 
-        auth_token_obj.last_used_at = timezone.now()
-        auth_token_obj.save()
+        user = User.objects.select_related("organization").get(
+            id=user_id, is_active=True
+        )
+        if not _touch_non_saml_access_token(token_id, user_id, now):
+            raise AuthenticationFailed("Invalid auth token")
 
         cache.set(
-            f"access_token_{auth_token_obj.id}",
-            {"token": token, "user": user},
+            cache_key,
+            {"token": token, "user": user, "non_saml_v1": True},
             timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
         )
 
         return user, token, None
 
-    except (DatabaseError, InterfaceError):
+    except (DatabaseError, InterfaceError, SamlCredentialInvalid):
         raise
     except Exception as e:
         raise AuthenticationFailed(f"Invalid Token parsed: {e}") from e

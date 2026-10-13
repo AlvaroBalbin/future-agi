@@ -18,7 +18,6 @@ import { useMutation } from "@tanstack/react-query";
 import { useSnackbar } from "src/components/snackbar";
 import { Box, Divider } from "@mui/material";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
-import logger from "src/utils/logger";
 import RightSectionAuth from "./RightSectionAuth";
 
 // ----------------------------------------------------------------------
@@ -26,6 +25,10 @@ import RightSectionAuth from "./RightSectionAuth";
 const SSOSchema = z.object({
   email: z.string().email("Enter valid email address"),
 });
+
+export function getSsoRedirectUrl(data) {
+  return data?.result?.url || null;
+}
 
 export default function SSOLogin() {
   const navigate = useNavigate();
@@ -45,12 +48,16 @@ export default function SSOLogin() {
       return response.data;
     },
     onSuccess: (data) => {
+      const redirectUrl = getSsoRedirectUrl(data);
+      if (redirectUrl) {
+        window.location.assign(redirectUrl);
+        return;
+      }
       if (data.new_org) {
-        logger.debug("SSO Response:", data);
         navigate(paths.auth.jwt.setup_org);
       } else {
-        enqueueSnackbar(data.message || "SSO login initiated successfully", {
-          variant: "success",
+        enqueueSnackbar(data.message || "SSO login initiation failed", {
+          variant: "error",
         });
       }
       trackEvent(Events.ssoLoginClicked, {

@@ -55,6 +55,21 @@ def test_saml_session_cannot_rename_passkey(idp_a, make_saml_token, saml_tenants
     assert passkey.name == "Original"
 
 
+def test_saml_session_cannot_mint_user_api_key(
+    idp_a, make_saml_token, saml_tenants
+):
+    _row, token = make_saml_token(saml_tenants.a1, saml_tenants.org_a, idp_a)
+
+    response = _bearer_client(token).post(
+        "/accounts/key/generate_secret_key/",
+        {"key_name": "saml-must-not-mint"},
+        format="json",
+    )
+
+    assert response.status_code == 403
+    assert "saml_scoped_session" in response.content.decode()
+
+
 def test_revocation_after_issuance(idp_a, make_saml_token, saml_tenants):
     """Warm cache state must not revive an inactive SAML credential."""
 

@@ -137,17 +137,37 @@ async function completeBrowserLogin(
   idp: LocalSamlIdp,
   email: string,
   next = '/dashboard/develop',
+  useSsoPage = false,
 ): Promise<string> {
   await page.goto('/auth/jwt/login', { waitUntil: 'domcontentloaded' });
   await idp.setIdentity(email);
-  const idpUrl = await initiate(page, email, next);
-  expect(new URL(idpUrl).hostname).toBe('127.0.0.1');
-  const callback = page.waitForURL(
-    url => url.origin === E2E.appUrl && url.pathname.startsWith('/dashboard/'),
-    { timeout: UI_READY },
-  );
-  await page.goto(idpUrl, { waitUntil: 'domcontentloaded' });
-  await callback;
+  let idpUrl: string;
+  if (useSsoPage) {
+    await page.getByRole('button', { name: 'Continue with SSO/SAML', exact: true }).click();
+    await page.getByLabel(/email/i).fill(email);
+    const initiation = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname === '/saml2_auth/idp-login/' && response.status() === 200;
+    }, { timeout: UI_READY });
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await initiation;
+    await page.waitForURL(url => url.hostname === '127.0.0.1', { timeout: UI_READY });
+    idpUrl = page.url();
+  } else {
+    idpUrl = await initiate(page, email, next);
+    expect(new URL(idpUrl).hostname).toBe('127.0.0.1');
+    await page.goto(idpUrl, { waitUntil: 'domcontentloaded' });
+  }
+  const completion = page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return url.pathname === '/saml2_auth/complete/' && response.status() === 302;
+  }, { timeout: UI_READY });
+  if (page.url() !== idpUrl) {
+    await page.goto(idpUrl, { waitUntil: 'domcontentloaded' });
+  }
+  await completion;
+  await expect.poll(() => page.url(), { timeout: UI_READY }).toMatch(/\/dashboard\//);
+  await expect.poll(() => new URL(page.url()).search, { timeout: UI_READY }).toBe('');
   return page.evaluate(() => localStorage.getItem('accessToken') ?? '');
 }
 
@@ -249,6 +269,12 @@ test.describe('SAML tenant isolation', () => {
          WHERE u.email = $1 AND t.auth_origin = 'saml'`, [actor.email],
       )).toEqual([]);
 
+      const denied = pageY.waitForURL(
+        url => url.origin === E2E.appUrl && url.pathname === '/auth/jwt/login' && url.searchParams.get('denied') === 'true',
+        { timeout: UI_READY },
+      );
+      await pageY.goto(`${E2E.apiUrl}/saml2_auth/complete/?c=${candidate}`, { waitUntil: 'domcontentloaded' });
+      await denied;
       await pageX.goto(`${E2E.apiUrl}/saml2_auth/complete/?c=${candidate}`, { waitUntil: 'domcontentloaded' });
       await expect(pageX).toHaveURL(/\/dashboard\//, { timeout: UI_READY });
       expect(await probe.pg<{ id: string; state: string }>(
@@ -295,6 +321,8 @@ test.describe('SAML tenant isolation', () => {
       backendChecks: ['the deep relative path is rendered after the barrier', 'unsafe next values land on the default dashboard route'],
     }),
   }, async ({ page, request }) => {
+    // Three SSO round trips: 3 * UI_READY plus two response waits and setup headroom.
+    test.setTimeout(240_000);
     const { actor, idp, probe } = await setupSamlActor(request, 'saml-next');
     try {
       await completeBrowserLogin(page, idp, actor.email, '/dashboard/develop/runs');
@@ -380,7 +408,7 @@ test.describe('SAML tenant isolation', () => {
       const samlToken = await page.evaluate(() => localStorage.getItem('accessToken') ?? '');
       await expect.poll(() => receipts.filter(receipt =>
         receipt.flow === 'SAML-E2E-006' && receipt.path === '/accounts/user-info/',
-      ).length).toBeGreaterThan(0);
+      ).length, { timeout: UI_READY }).toBeGreaterThan(0);
       const firstUserInfo = receipts.find(receipt =>
         receipt.flow === 'SAML-E2E-006' && receipt.path === '/accounts/user-info/',
       );
