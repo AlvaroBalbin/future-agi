@@ -1783,6 +1783,24 @@ class TestMarkDeletedByMetadata:
         assert "eval_id" not in sql
         assert "has(metadata.key, 'feedback_id')" in sql
 
+    def test_tombstone_sql_can_exclude_replacement_revision(self):
+        from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
+
+        with patch.object(ClickHouseVectorDB, "__init__", return_value=None):
+            db = ClickHouseVectorDB()
+        db.client = MagicMock()
+
+        db.mark_deleted_by_metadata(
+            "feedbacks",
+            {"feedback_id": "fb-9"},
+            exclude_filters={"feedback_revision": "revision-1"},
+        )
+
+        sql = db.client.execute.call_args.args[0]
+        assert "feedback_id" in sql
+        assert "NOT (has(metadata.key, 'feedback_revision')" in sql
+        assert "'revision-1'" in sql
+
     def test_empty_filters_cannot_tombstone_the_entire_table(self):
         from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
 

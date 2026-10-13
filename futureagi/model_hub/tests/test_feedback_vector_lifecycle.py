@@ -184,6 +184,34 @@ def test_embedding_failure_does_not_remove_previous_vectors(
 
 
 @pytest.mark.integration
+def test_insert_failure_does_not_remove_previous_vectors(
+    feedback_factory, vector_manager, monkeypatch
+):
+    feedback = feedback_factory()
+    embed_feedback(vector_manager, feedback)
+
+    original_insert = vector_manager.insert_embedding
+    insert_count = 0
+
+    def fail_on_second_insert(*args, **kwargs):
+        nonlocal insert_count
+        insert_count += 1
+        if insert_count == 2:
+            raise RuntimeError("clickhouse insert unavailable")
+        return original_insert(*args, **kwargs)
+
+    monkeypatch.setattr(vector_manager, "insert_embedding", fail_on_second_insert)
+    feedback.explanation = "replacement correction"
+    vectors, metadata = embed_feedback(vector_manager, feedback)
+
+    assert vectors == []
+    assert metadata == []
+    rows = active_metadata(vector_manager)
+    assert len(rows) == 2
+    assert {row["feedback_comment"] for row in rows} == {"superseded correction"}
+
+
+@pytest.mark.integration
 def test_retune_does_not_reembed_after_revoking_previous_vectors(
     feedback_factory, vector_manager, monkeypatch
 ):

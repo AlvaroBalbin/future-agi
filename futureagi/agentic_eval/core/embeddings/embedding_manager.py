@@ -435,6 +435,7 @@ class EmbeddingManager:
         unique_key="item_id",
         exclude_keys=None,
         embedding_vector=None,
+        mark_existing_deleted=True,
     ):
         """
         Inserts the embedding of a data item into the ClickHouse vector table.
@@ -475,6 +476,7 @@ class EmbeddingManager:
             data,
             [unique_key] if isinstance(unique_key, str) else unique_key,
             exclude_keys,
+            mark_existing_deleted=mark_existing_deleted,
         )
 
     # @log_performance
@@ -488,6 +490,7 @@ class EmbeddingManager:
         organization_id=None,
         workspace_id=None,
     ):
+        feedback_revision = None
         try:
             if table_name in _TENANT_SCOPED_TABLES and not organization_id:
                 raise ValueError(
@@ -607,11 +610,15 @@ class EmbeddingManager:
                     )
                     raise
             if insert and table_name == FEEDBACK_TABLE_NAME and eval_id != "":
-                if row_dict.get("feedback_id"):
+                feedback_revision = (
+                    str(uuid.uuid4())
+                    if row_dict.get("feedback_id") and vectors
+                    else None
+                )
+                if feedback_revision:
+                    for metadata in metadata_list:
+                        metadata["feedback_revision"] = feedback_revision
                     self.db_client.create_table(table_name)
-                    self.db_client.mark_deleted_by_metadata(
-                        table_name, {"feedback_id": str(row_dict["feedback_id"])}
-                    )
                 for metadata, embedding_vector in zip(
                     metadata_list, vectors, strict=True
                 ):
@@ -630,11 +637,34 @@ class EmbeddingManager:
                         unique_key_value=unique_key_value,
                         unique_key=unique_key,
                         embedding_vector=embedding_vector,
+                        mark_existing_deleted=not feedback_revision,
+                    )
+
+                if row_dict.get("feedback_id"):
+                    self.db_client.mark_deleted_by_metadata(
+                        table_name,
+                        {"feedback_id": str(row_dict["feedback_id"])},
+                        exclude_filters=(
+                            {"feedback_revision": feedback_revision}
+                            if feedback_revision
+                            else None
+                        ),
                     )
 
             return vectors, metadata_list
 
         except Exception as e:
+            if insert and table_name == FEEDBACK_TABLE_NAME and feedback_revision:
+                try:
+                    self.db_client.mark_deleted_by_metadata(
+                        table_name,
+                        {"feedback_revision": feedback_revision},
+                    )
+                except Exception:
+                    logger.exception(
+                        "feedback_replacement_cleanup_failed",
+                        feedback_revision=feedback_revision,
+                    )
             traceback.print_exc()
             logger.exception(f"Error in data_formatter: {e}")
             return [], []
