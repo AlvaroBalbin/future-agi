@@ -67,10 +67,16 @@ def _created_at_key(row: Mapping[str, Any]) -> str:
 
 def _latest(rows: Iterable[Mapping[str, Any]]) -> Mapping[str, Any] | None:
     materialized = list(rows)
-    return max(materialized, key=lambda row: (_created_at_key(row), _stable_log_id(row))) if materialized else None
+    return (
+        max(materialized, key=lambda row: (_created_at_key(row), _stable_log_id(row)))
+        if materialized
+        else None
+    )
 
 
-def select_latest_completed(rows: Iterable[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+def select_latest_completed(
+    rows: Iterable[Mapping[str, Any]],
+) -> Mapping[str, Any] | None:
     """Select the newest completed, non-error row by time then stable log id."""
 
     return _latest(row for row in rows if _is_completed(row))
@@ -130,7 +136,9 @@ def _choice_values(row: Mapping[str, Any]) -> list[str]:
     return [str(value) for value in raw if value not in (None, "")]
 
 
-def union_choice_labels(declared: Iterable[Any] | None, observed: Iterable[Any] | None) -> list[str]:
+def union_choice_labels(
+    declared: Iterable[Any] | None, observed: Iterable[Any] | None
+) -> list[str]:
     """Return declared labels first, then any observed labels in stable order."""
 
     labels: list[str] = []
@@ -154,7 +162,11 @@ def _marker(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any] | None:
         if matching:
             marker: dict[str, Any] = {"status": status}
             if status == "skipped":
-                reason = _latest(matching).get("skipped_reason") if _latest(matching) else None
+                reason = (
+                    _latest(matching).get("skipped_reason")
+                    if _latest(matching)
+                    else None
+                )
                 if reason:
                     marker["skipped_reason"] = reason
             return marker
@@ -220,7 +232,7 @@ def count_mode_cell(
     if kind == "CHOICES":
         observed = [label for row in completed for label in _choice_values(row)]
         labels = union_choice_labels(declared_labels, observed)
-        counts = {label: 0 for label in labels}
+        counts = dict.fromkeys(labels, 0)
         for row in completed:
             # A label counts once per completed result, not once per duplicate
             # in output_str_list.
@@ -237,7 +249,11 @@ def _config_value(configs: Mapping[str, Any] | Iterable[Any], config_id: str) ->
     if isinstance(configs, Mapping):
         return configs.get(config_id, {})
     for config in configs:
-        value = config.get("id") if isinstance(config, Mapping) else getattr(config, "id", None)
+        value = (
+            config.get("id")
+            if isinstance(config, Mapping)
+            else getattr(config, "id", None)
+        )
         if str(value) == config_id:
             return config
     return {}
@@ -273,7 +289,9 @@ def _span_row(
     span_id = str(row.get("span_id") or row.get("observation_span_id") or "")
     return {
         "span_id": span_id,
-        "span_name": row.get("span_name") or row.get("observation_span_name") or span_id,
+        "span_name": row.get("span_name")
+        or row.get("observation_span_name")
+        or span_id,
         "value": None if error else _detail_value(row, output_type),
         "explanation": row.get("eval_explanation") or row.get("explanation") or None,
         "error": error,
@@ -358,9 +376,7 @@ def build_eval_rollup(
     caller to fill with an empty scoped rollup for spans without eval rows.
     """
 
-    by_span_config: dict[tuple[str, str], list[Mapping[str, Any]]] = defaultdict(
-        list
-    )
+    by_span_config: dict[tuple[str, str], list[Mapping[str, Any]]] = defaultdict(list)
     config_ids: list[str] = []
     for row in rows:
         span_id = str(row.get("span_id") or row.get("observation_span_id") or "")
@@ -399,7 +415,9 @@ def build_eval_rollup(
             selected = [select_latest_completed(by_span_config[key]) for key in keys]
             selected = [row for row in selected if row is not None]
             fallback = [row for key in keys for row in by_span_config[key]]
-            scoped_evals.append(_eval_projection(config_id, configs, selected, fallback))
+            scoped_evals.append(
+                _eval_projection(config_id, configs, selected, fallback)
+            )
         result[scope_span_id] = {
             "scope": "trace" if scope_span_id == root_span_id else "span",
             "evals": scoped_evals,

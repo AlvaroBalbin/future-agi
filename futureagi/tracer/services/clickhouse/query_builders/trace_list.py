@@ -19,6 +19,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from tracer.services.clickhouse.eval_logger_table import (
+    count_mode_choice_array,
     eval_logger_live_state_columns,
     eval_logger_source,
     eval_logger_version_column,
@@ -242,6 +243,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         bounded_global_span_witnesses: bool = False,
         bounded_sampling_salt: str | None = None,
         bounded_sampling_rate: float | None = None,
+        eval_count_mode: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id=project_id, project_ids=project_ids, **kwargs)
@@ -267,6 +269,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             else None
         )
         self.eval_filter_metadata = eval_filter_metadata
+        self.eval_count_mode = eval_count_mode
         self._bounded_internal_scan = bool(bounded_internal_scan)
         self._bounded_identity_only = bool(bounded_identity_only)
         # Graph sampling may narrow root seeding/order to one temporal
@@ -757,6 +760,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         if filter_item is None:
             return "", {}
         filter_builder = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_TRACE,
             annotation_label_ids=self.annotation_label_ids,
@@ -812,6 +816,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         )
         value = config.get("filter_value", config.get("filterValue"))
         filter_builder = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
             project_id=self.project_id,
@@ -884,6 +889,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         if filter_item is None:
             return "", {}
         filter_builder = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_TRACE,
             project_id=self.project_id,
@@ -4520,6 +4526,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                         ]
                         branch_label_set_known = True
                     residual_builder = self._FILTER_BUILDER_CLS(
+                        eval_count_mode=self.eval_count_mode,
                         table=self.TABLE,
                         query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_TRACE,
                         annotation_label_ids=branch_label_ids,
@@ -4569,6 +4576,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 residual_predicate = " OR ".join(residual_branches) or "0 = 1"
             else:
                 residual_builder = self._FILTER_BUILDER_CLS(
+                    eval_count_mode=self.eval_count_mode,
                     table=self.TABLE,
                     query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_TRACE,
                     annotation_label_ids=self.annotation_label_ids,
@@ -5076,6 +5084,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
         # Translate attribute / metric filters
         fb = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
@@ -5239,6 +5248,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         self.params["end_date"] = self.end_date
 
         fb = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
@@ -5455,6 +5465,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 f"unsafe legacy filtered trace count blocked: {error_code}"
             )
         fb = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
@@ -5703,11 +5714,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             ) AS error_count,
             count() AS eval_count,
             groupArrayIf(
-                if(
-                    notEmpty(JSONExtract(output_str_list, 'Array(String)')),
-                    JSONExtract(output_str_list, 'Array(String)'),
-                    if(ifNull(output_str, '') != '', [ifNull(output_str, '')], [])
-                ),
+                {count_mode_choice_array() if count_mode else "output_str_list"},
                 error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
             ) AS str_lists,
             countIf(status = 'skipped') AS skipped_count,
@@ -6025,9 +6032,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                 continue
 
             if count_mode:
-                output_type = (output_types.get(config_id) or "").replace(
-                    "/", "_"
-                ).replace(" ", "_").upper()
+                output_type = (
+                    (output_types.get(config_id) or "")
+                    .replace("/", "_")
+                    .replace(" ", "_")
+                    .upper()
+                )
                 if success_count == 0:
                     marker = non_terminal_eval_marker(
                         {
@@ -6062,7 +6072,9 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                                 sl = []
                         if not isinstance(sl, list):
                             continue
-                        for choice in {str(value) for value in sl if value not in (None, "")}:
+                        for choice in {
+                            str(value) for value in sl if value not in (None, "")
+                        }:
                             counts[choice] = counts.get(choice, 0) + 1
                     result.setdefault(trace_id, {})[config_id] = counts
                     continue

@@ -24,6 +24,7 @@ from typing import Any
 from django.conf import settings
 
 from tracer.services.clickhouse.eval_logger_table import (
+    count_mode_choice_array,
     eval_logger_live_state_columns,
     eval_logger_source,
     eval_logger_version_column,
@@ -325,6 +326,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         bounded_anchor_probe: bool = False,
         bounded_sampling_salt: str | None = None,
         bounded_sampling_rate: float | None = None,
+        eval_count_mode: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id=project_id, project_ids=project_ids, **kwargs)
@@ -347,6 +349,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             else None
         )
         self.eval_filter_metadata = eval_filter_metadata
+        self.eval_count_mode = eval_count_mode
         self.end_user_id = end_user_id
         self.project_version_id = project_version_id
         self._bounded_internal_scan = bool(bounded_internal_scan)
@@ -1293,6 +1296,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             if necessary_leaf is None or _unindexed_positive_micro_seed:
                 raise ValueError("span annotation candidate seed is unavailable")
             relation = self._FILTER_BUILDER_CLS(
+                eval_count_mode=self.eval_count_mode,
                 table=self.TABLE,
                 query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
                 project_id=self.project_id,
@@ -1611,6 +1615,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                         ]
                         branch_label_set_known = True
                     branch_builder = self._FILTER_BUILDER_CLS(
+                        eval_count_mode=self.eval_count_mode,
                         table=self.TABLE,
                         query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
                         annotation_label_ids=branch_label_ids,
@@ -1674,6 +1679,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                     for item in residual_filters
                 )
                 residual_builder = self._FILTER_BUILDER_CLS(
+                    eval_count_mode=self.eval_count_mode,
                     table=self.TABLE,
                     query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
                     annotation_label_ids=self.annotation_label_ids,
@@ -1847,6 +1853,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         self.params["end_date"] = end_date
 
         fb = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
@@ -2080,6 +2087,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         self.params["end_date"] = end_date
 
         fb = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
@@ -2214,6 +2222,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         if error_code := self.bounded_filter_degraded_error_code():
             raise ValueError(f"unsafe legacy filtered span count blocked: {error_code}")
         fb = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
@@ -2469,11 +2478,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             anyIf(skipped_reason, status = 'skipped') AS skipped_reason,
             count() AS eval_count,
             groupArrayIf(
-                if(
-                    notEmpty(JSONExtract(output_str_list, 'Array(String)')),
-                    JSONExtract(output_str_list, 'Array(String)'),
-                    if(ifNull(output_str, '') != '', [ifNull(output_str, '')], [])
-                ),
+                {count_mode_choice_array() if count_mode else "output_str_list"},
                 error = 0 AND ifNull(output_str, '') != 'ERROR' AND ifNull(status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
             ) AS str_lists
             {count_projection}
@@ -2626,9 +2631,12 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 continue
 
             if count_mode:
-                output_type = (output_types.get(config_id) or "").replace(
-                    "/", "_"
-                ).replace(" ", "_").upper()
+                output_type = (
+                    (output_types.get(config_id) or "")
+                    .replace("/", "_")
+                    .replace(" ", "_")
+                    .upper()
+                )
                 if success_count == 0:
                     marker = non_terminal_eval_marker(row)
                     if marker is not None:
@@ -2656,7 +2664,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                                 sl = []
                         if not isinstance(sl, list):
                             continue
-                        for choice in {str(value) for value in sl if value not in (None, "")}:
+                        for choice in {
+                            str(value) for value in sl if value not in (None, "")
+                        }:
                             counts[choice] = counts.get(choice, 0) + 1
                     result.setdefault(span_key, {})[config_id] = counts
                     continue

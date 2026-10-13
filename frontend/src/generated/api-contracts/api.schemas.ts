@@ -29791,6 +29791,69 @@ export interface TraceVoiceCallListQueryApi {
   allow_sampled?: boolean;
 }
 
+export type TraceVoiceCallDetailResultApiEvalRollupScope =
+  (typeof TraceVoiceCallDetailResultApiEvalRollupScope)[keyof typeof TraceVoiceCallDetailResultApiEvalRollupScope];
+
+export const TraceVoiceCallDetailResultApiEvalRollupScope = {
+  trace: "trace",
+  span: "span",
+} as const;
+
+export type EvalRollupEvalApiTargetType =
+  (typeof EvalRollupEvalApiTargetType)[keyof typeof EvalRollupEvalApiTargetType];
+
+export const EvalRollupEvalApiTargetType = {
+  span: "span",
+  trace: "trace",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalRollupSpanApiValue = JsonValueApi;
+
+export interface EvalRollupSpanApi {
+  /** @minLength 1 */
+  span_id: string;
+  span_name?: string;
+  /** Any valid JSON value. */
+  value?: EvalRollupSpanApiValue | null;
+  /** @minLength 1 */
+  explanation?: string | null;
+  error?: boolean;
+  /** @minLength 1 */
+  status?: string | null;
+  eval_config_id?: string;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalRollupEvalApiChoicesMap = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalRollupEvalApiAggregate = JsonValueApi;
+
+export interface EvalRollupEvalApi {
+  /** @minLength 1 */
+  eval_config_id: string;
+  /** @minLength 1 */
+  eval_name: string;
+  /** @minLength 1 */
+  output_type?: string | null;
+  /** @minLength 1 */
+  template_type?: string | null;
+  target_type?: EvalRollupEvalApiTargetType | null;
+  /** Any valid JSON value. */
+  choices_map?: EvalRollupEvalApiChoicesMap | null;
+  /** Any valid JSON value. */
+  aggregate: EvalRollupEvalApiAggregate;
+  spans: EvalRollupSpanApi[];
+  error?: boolean;
+}
+
 export type TraceVoiceCallDetailResultApiCostBreakdown = {
   [key: string]: unknown;
 };
@@ -29826,7 +29889,9 @@ export type TraceVoiceCallDetailResultApiEvalOutputs = {
 };
 
 export type TraceVoiceCallDetailResultApiEvalRollup = {
-  [key: string]: unknown;
+  scope: TraceVoiceCallDetailResultApiEvalRollupScope;
+  evals: EvalRollupEvalApi[];
+  error?: boolean;
 };
 
 export type TraceVoiceCallDetailResultApiScenarioGraph = {
@@ -29887,7 +29952,7 @@ export interface TraceVoiceCallDetailResultApi {
   call_metadata: TraceVoiceCallDetailResultApiCallMetadata;
   observation_span: TraceVoiceCallDetailResultApiObservationSpanItem[];
   eval_outputs: TraceVoiceCallDetailResultApiEvalOutputs;
-  eval_rollup?: TraceVoiceCallDetailResultApiEvalRollup;
+  eval_rollup?: TraceVoiceCallDetailResultApiEvalRollup | null;
   /** @minLength 1 */
   call_execution_id?: string | null;
   /** @minLength 1 */
@@ -29923,61 +29988,6 @@ export const EvalRollupApiScope = {
   trace: "trace",
   span: "span",
 } as const;
-
-export type EvalRollupEvalApiTargetType =
-  (typeof EvalRollupEvalApiTargetType)[keyof typeof EvalRollupEvalApiTargetType];
-
-export const EvalRollupEvalApiTargetType = {
-  span: "span",
-  trace: "trace",
-} as const;
-
-/**
- * Any valid JSON value.
- */
-export type EvalRollupSpanApiValue = JsonValueApi;
-
-export interface EvalRollupSpanApi {
-  /** @minLength 1 */
-  span_id: string;
-  span_name?: string;
-  /** Any valid JSON value. */
-  value?: EvalRollupSpanApiValue | null;
-  /** @minLength 1 */
-  explanation?: string | null;
-  error?: boolean;
-  /** @minLength 1 */
-  status?: string | null;
-  eval_config_id?: string;
-}
-
-/**
- * Any valid JSON value.
- */
-export type EvalRollupEvalApiChoicesMap = JsonValueApi;
-
-/**
- * Any valid JSON value.
- */
-export type EvalRollupEvalApiAggregate = JsonValueApi;
-
-export interface EvalRollupEvalApi {
-  /** @minLength 1 */
-  eval_config_id: string;
-  /** @minLength 1 */
-  eval_name: string;
-  /** @minLength 1 */
-  output_type?: string | null;
-  /** @minLength 1 */
-  template_type?: string | null;
-  target_type?: EvalRollupEvalApiTargetType | null;
-  /** Any valid JSON value. */
-  choices_map?: EvalRollupEvalApiChoicesMap | null;
-  /** Any valid JSON value. */
-  aggregate: EvalRollupEvalApiAggregate;
-  spans: EvalRollupSpanApi[];
-  error?: boolean;
-}
 
 export interface EvalRollupApi {
   scope: EvalRollupApiScope;

@@ -2186,6 +2186,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             eval_config_ids=eval_config_ids,
             annotation_label_ids=annotation_label_ids,
             annotation_label_ids_by_project=annotation_label_ids_by_project,
+            eval_count_mode=True,
             bounded_internal_scan=cursor_enabled,
         )
         requires_cursor = builder.requires_cursor_for_long_filtered_read()
@@ -4384,6 +4385,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             project_id=str(project_id),
             page_number=0,
             page_size=SPAN_NAVIGATION_CANDIDATE_LIMIT,
+            eval_count_mode=project_version_id is None,
             filters=list(filters or []),
             project_version_id=(
                 str(project_version_id) if project_version_id is not None else None

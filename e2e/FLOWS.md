@@ -4,23 +4,29 @@
 
 ## agents
 
-### AGENT-E2E-001 — agent call logs render evaluation columns for scoped call executions
+### AGENT-E2E-001 — Observe voice Call Logs show and filter the newest evaluation count
 
-**Goal:** A developer opening an agent version Call Logs sees the evaluation result column for its calls.  
-**Spec:** `flows/agents/call-log-eval-columns.spec.ts:7`  
+**Goal:** Read and filter the newest completed evaluation on a voice call in Observe Call Logs, then inspect its explanation.  
+**Spec:** `flows/agents/call-log-eval-columns.spec.ts:56`  
 **Tags:** —
 
 **User steps:**
 
-1. seed completed call executions with evaluation output in one actor scope
-2. open the agent version Call Logs tab
-3. see the seeded calls and their evaluation column
+1. create an Observe voice project and ingest a conversation root plus evaluable child through OTLP
+2. run Pass then Fail historical tasks on the same child/config, replaying stable source IDs with distinct input markers
+3. open Observe Call Logs and use Display to show Call ID and the named evaluator
+4. read exactly 1 fail and click the eval cell to open Evals automatically
+5. expand the per-span breakdown and the newest explanation
+6. select native Failed then Passed filters and see exactly the seeded call then no calls
 
 **Backend state verified:**
 
-- the seeded AgentDefinition, AgentVersion and CallExecution rows belong to the actor organization and workspace
-- all seeded calls are completed and carry non-empty eval_outputs
-- the Call Logs endpoint returns the actor-scoped rows used by the grid
+- the simulator-source project/config belong to the actor scope and both OTLP spans plus the curated trace retain exact identities through replay
+- two distinct completed task/logger rows for the same config/child persist as Pass then newer Fail, with exact mapped explanations and mock usage
+- ClickHouse tracer_eval_logger FINAL equals both exact Postgres logger/task/trace/span identities and verdicts
+- the actual voice list and its API replay expose the named span-target config, counts {pass:0,fail:1} and the backward-compatible scalar output 0
+- voice detail preserves scalar Fail and adds the exact latest per-span rollup; eval-cell click selects Evals and shows its explanation
+- native Failed and Passed filters send the config-bound predicate; browser and API return exactly the call ID or the empty set, respectively
 
 ## alerts
 
@@ -1249,25 +1255,25 @@
 
 ### OBS-E2E-037 — Observe count tiles use one latest completed eval per span
 
-**Goal:** See one latest completed evaluation result per span in Observe list tiles and the detail rollup.  
-**Spec:** `flows/observe/eval-count-tiles.spec.ts:56`  
+**Goal:** See only the newest completed result for a rerun span in Observe count tiles and the detail breakdown.  
+**Spec:** `flows/observe/eval-count-tiles.spec.ts:55`  
 **Tags:** —
 
 **User steps:**
 
-1. ingest one trace with a root and child span
-2. run the same Pass/Fail evaluator twice against the same child span
-3. verify both completed attempts exist and the second is newer
-4. see exactly one pass in the trace and span count tiles
-5. expand the detail per-span breakdown and see the latest result
+1. ingest a root and child span and run a real Pass evaluation on the child
+2. replay the same OTLP identities and timestamps with a Fail input and distinct explanation marker
+3. run a second historical task without deleting the first completed result
+4. show the identity and evaluator columns in the trace and span grids and read exactly 1 fail
+5. click the eval cell to open Evals, expand the per-span breakdown and its latest explanation
 
 **Backend state verified:**
 
-- actor-scoped project and both OTLP spans are present in ClickHouse spans FINAL
-- Postgres and ClickHouse tracer_eval_logger FINAL contain exactly two completed attempts for the same config and child span, with the second newer
-- trace and span list responses render {pass:1,fail:0} for the minted eval config
-- trace detail exposes the child latest value pass and aggregate {pass:1,fail:0}
-- the trace and span grids render exactly 1 pass and the expanded rollup renders the latest result
+- the project and config have the exact actor scope; both source spans and the curated trace retain their identities across replay
+- two distinct completed task/logger rows retain the same config and child span, with Pass then a newer Fail and exact mapped explanations and mock usage
+- ClickHouse tracer_eval_logger FINAL equals both exact Postgres rows, including task/logger/trace/span IDs and verdicts
+- the actual trace and span list responses and API replays expose the minted span-target config and exactly {pass:0,fail:1}
+- trace-root and recursively located child detail rollups contain only the latest Fail and explanation; eval-cell click opens Evals and the expanded breakdown displays them
 
 ## prompts
 

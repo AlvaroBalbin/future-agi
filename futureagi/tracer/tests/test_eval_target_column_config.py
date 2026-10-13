@@ -57,9 +57,7 @@ def test_count_columns_drop_the_avg_prefix_but_averaged_scores_keep_it():
     )
     assert [c["name"] for c in counted] == ["Helpful", "Tone", "Avg. Relevance"]
 
-    averaged = update_column_config_based_on_eval_config(
-        [], configs, skip_choices=True
-    )
+    averaged = update_column_config_based_on_eval_config([], configs, skip_choices=True)
     assert [c["name"] for c in averaged] == [
         "Avg. Helpful",
         "Avg. Tone",

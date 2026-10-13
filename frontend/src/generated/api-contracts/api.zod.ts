@@ -65645,7 +65645,39 @@ export const TracerTraceVoiceCallDetailResponse = zod.object({
       ),
     ),
     eval_outputs: zod.record(zod.string(), zod.unknown()),
-    eval_rollup: zod.record(zod.string(), zod.unknown()).optional(),
+    eval_rollup: zod
+      .object({
+        scope: zod.enum(["trace", "span"]),
+        evals: zod.array(
+          zod.object({
+            eval_config_id: zod.string().min(1),
+            eval_name: zod.string().min(1),
+            output_type: zod.string().min(1).nullish(),
+            template_type: zod.string().min(1).nullish(),
+            target_type: zod.enum(["span", "trace"]).nullish(),
+            choices_map: jsonValueSchema
+              .optional()
+              .describe("Any valid JSON value."),
+            aggregate: jsonValueSchema.describe("Any valid JSON value."),
+            spans: zod.array(
+              zod.object({
+                span_id: zod.string().min(1),
+                span_name: zod.string().optional(),
+                value: jsonValueSchema
+                  .optional()
+                  .describe("Any valid JSON value."),
+                explanation: zod.string().min(1).nullish(),
+                error: zod.boolean().optional(),
+                status: zod.string().min(1).nullish(),
+                eval_config_id: zod.string().optional(),
+              }),
+            ),
+            error: zod.boolean().optional(),
+          }),
+        ),
+        error: zod.boolean().optional(),
+      })
+      .nullish(),
     call_execution_id: zod.string().min(1).nullish(),
     test_execution_id: zod.string().min(1).nullish(),
     scenario_id: zod.string().min(1).nullish(),
@@ -65711,7 +65743,7 @@ export const TracerTraceReadResponse = zod.object({
                 template_type: zod.string().min(1).nullish(),
                 target_type: zod.enum(["span", "trace"]).nullish(),
                 choices_map: jsonValueSchema
-                  .nullish()
+                  .optional()
                   .describe("Any valid JSON value."),
                 aggregate: jsonValueSchema.describe("Any valid JSON value."),
                 spans: zod.array(
@@ -65719,7 +65751,7 @@ export const TracerTraceReadResponse = zod.object({
                     span_id: zod.string().min(1),
                     span_name: zod.string().optional(),
                     value: jsonValueSchema
-                      .nullish()
+                      .optional()
                       .describe("Any valid JSON value."),
                     explanation: zod.string().min(1).nullish(),
                     error: zod.boolean().optional(),

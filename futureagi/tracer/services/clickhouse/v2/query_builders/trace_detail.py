@@ -301,7 +301,12 @@ def retrieve_trace_detail_ch(
                     else []
                 ),
                 "choices_map": (
-                    dict(getattr(config.eval_template, "config", {}).get("choices_map", {}) or {})
+                    dict(
+                        getattr(config.eval_template, "config", {}).get(
+                            "choices_map", {}
+                        )
+                        or {}
+                    )
                     if config.eval_template
                     else {}
                 ),
@@ -322,8 +327,7 @@ def retrieve_trace_detail_ch(
                 {
                     **row,
                     "span_id": sid,
-                    "span_name": span_map[sid]["observation_span"].get("name")
-                    or sid,
+                    "span_name": span_map[sid]["observation_span"].get("name") or sid,
                 }
             )
             # Score is type-dependent; the CH mirror coerces unused typed
@@ -466,9 +470,7 @@ def retrieve_trace_detail_ch(
             orphan_spans.append(entry)
 
     root_span_id = (
-        str(root_spans[0]["observation_span"].get("id") or "")
-        if root_spans
-        else None
+        str(root_spans[0]["observation_span"].get("id") or "") if root_spans else None
     )
     if detail_read.eval_unavailable:
         for sid, entry in span_map.items():

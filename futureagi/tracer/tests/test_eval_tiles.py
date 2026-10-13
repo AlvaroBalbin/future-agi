@@ -81,12 +81,17 @@ def test_numeric_count_cell_keeps_zero_drops_non_finite_and_scales():
     ]
 
     assert count_mode_cell(rows, "score", [], {}) == 20.0
-    assert count_mode_cell([_row(output_float=0.0, output_bool=None)], "score", [], {}) == 0.0
+    assert (
+        count_mode_cell([_row(output_float=0.0, output_bool=None)], "score", [], {})
+        == 0.0
+    )
 
 
 def test_markers_win_when_a_config_has_no_completed_attempt():
     assert count_mode_cell([_row(error=True)], "Pass/Fail", [], {}) == {"error": True}
-    assert count_mode_cell([_row(status="skipped", skipped_reason="budget")], "Pass/Fail", [], {}) == {
+    assert count_mode_cell(
+        [_row(status="skipped", skipped_reason="budget")], "Pass/Fail", [], {}
+    ) == {
         "status": "skipped",
         "skipped_reason": "budget",
     }
@@ -205,7 +210,11 @@ def test_rollup_reads_choices_under_the_detail_normalized_output_type():
     # Trace detail labels configs with derive_output_type(), which names a
     # choices template "deterministic" (and Pass/Fail "pass_fail").
     configs = {
-        "tone": {"name": "Tone", "output_type": "deterministic", "choices": ["neutral"]},
+        "tone": {
+            "name": "Tone",
+            "output_type": "deterministic",
+            "choices": ["neutral"],
+        },
         "helpful": {"name": "Helpful", "output_type": "pass_fail"},
     }
     rollups = build_eval_rollup(

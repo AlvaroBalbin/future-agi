@@ -830,7 +830,11 @@ class ClickHouseFilterBuilder:
         annotation_label_set_known: bool = False,
         eval_filter_metadata: dict[str, EvalFilterMetadata] | None = None,
         resolved_candidate_sessions_table: str | None = None,
+        eval_count_mode: bool = False,
     ) -> None:
+        # Observe lists opt into newest-completed tiles. Session/user/dashboard
+        # consumers retain matching across all live attempts by default.
+        self.eval_count_mode = eval_count_mode
         self.table = table
         self.annotation_label_ids = annotation_label_ids or []
         self.query_mode = query_mode
@@ -2835,9 +2839,6 @@ class ClickHouseFilterBuilder:
             "AND ifNull(physical_eval.status, '') NOT IN "
             "('pending', 'running', 'skipped', 'errored')"
         )
-        selected_completed_predicate = completed_predicate.replace(
-            "physical_eval.", "latest_eval."
-        )
 
         # PERF + correctness: do not use table-level FINAL (it can merge the
         # whole eval table before candidate pruning). First restrict the scan
@@ -2858,13 +2859,6 @@ class ClickHouseFilterBuilder:
             negate_outer: bool = False,
         ) -> str:
             outer_operator = "NOT IN" if negate_outer else "IN"
-            # Nullability and value filters both follow the result the list
-            # tile displays: the newest completed row per span/config.
-            partition_completion = completed_predicate
-            selected_partition_completion = partition_completion.replace(
-                "physical_eval.", "latest_eval."
-            )
-            completed_match_guard = f"AND ({selected_partition_completion})"
             candidate_filter = (
                 self._candidate_span_entity_filter(
                     "eval_scan.trace_id", f"eval_scan.{inner_col}"
@@ -2872,23 +2866,24 @@ class ClickHouseFilterBuilder:
                 if self.query_mode == self.QUERY_MODE_SPAN
                 else self._candidate_filter(f"eval_scan.{inner_col}")
             )
-            return (
-                f"{outer_col} {outer_operator} ("
-                f"SELECT {inner_select} FROM ("
-                "SELECT physical_eval.*, row_number() OVER ("
-                "PARTITION BY physical_eval.trace_id, "
-                "physical_eval.custom_eval_config_id, "
-                "physical_eval.observation_span_id, ("
-                f"{partition_completion}"
-                ") ORDER BY physical_eval.created_at DESC, "
-                "toString(physical_eval.id) DESC"
-                ") AS completed_rank FROM ("
+            status_columns = f"{status_projection}, " if self.eval_count_mode else ""
+            bool_column = "eval_scan.output_bool"
+            if self.eval_count_mode and output_type == "PASS_FAIL":
+                # Count tiles also read legacy float-only verdicts. Use the
+                # same fallback for value and presence filters, but do not
+                # reinterpret numeric evals or change default history readers.
+                bool_column = (
+                    "ifNull(eval_scan.output_bool, "
+                    "if(isFinite(eval_scan.output_float), "
+                    "toUInt8(eval_scan.output_float >= 0.5), NULL)) AS output_bool"
+                )
+            collapsed = (
                 "SELECT eval_scan.id, eval_scan.trace_id, "
                 "eval_scan.observation_span_id, eval_scan.custom_eval_config_id, "
-                "eval_scan.created_at, eval_scan.output_bool, "
+                f"eval_scan.created_at, {bool_column}, "
                 "eval_scan.output_float, eval_scan.output_str, "
                 "eval_scan.output_str_list, eval_scan.error, "
-                f"{status_projection}, {eval_live_projection} "
+                f"{status_columns}{eval_live_projection} "
                 f"FROM {eval_table} AS eval_scan "
                 f"WHERE eval_scan.custom_eval_config_id IN %({param_cfg})s "
                 f"{eval_date_clause}"
@@ -2896,16 +2891,31 @@ class ClickHouseFilterBuilder:
                 f"{candidate_filter} "
                 f"ORDER BY eval_scan.{eval_version_col} DESC "
                 "LIMIT 1 BY eval_scan.id"
-                ") AS physical_eval "
-                f"WHERE {physical_eval_not_deleted}"
-                ") AS latest_eval "
+            )
+            selected_guard = ""
+            if self.eval_count_mode:
+                # First resolve physical versions/tombstones, then rank live
+                # completed attempts. Apply value/nullability only afterwards:
+                # an older matching value must not displace a newer result.
+                collapsed = (
+                    "SELECT physical_eval.*, row_number() OVER ("
+                    "PARTITION BY physical_eval.trace_id, "
+                    "physical_eval.custom_eval_config_id, "
+                    "physical_eval.observation_span_id "
+                    "ORDER BY physical_eval.created_at DESC, "
+                    "toString(physical_eval.id) DESC"
+                    ") AS completed_rank FROM ("
+                    f"{collapsed}) AS physical_eval "
+                    f"WHERE {physical_eval_not_deleted} "
+                    f"AND ({completed_predicate})"
+                )
+                selected_guard = "AND latest_eval.completed_rank = 1 "
+            return (
+                f"{outer_col} {outer_operator} ("
+                f"SELECT {inner_select} FROM ({collapsed}) AS latest_eval "
                 f"WHERE {eval_not_deleted} "
-                f"AND (NOT ({selected_partition_completion}) "
-                "OR latest_eval.completed_rank = 1) "
-                f"{error_clause} "
-                f"{completed_match_guard} "
-                f"AND {match_condition}"
-                f")"
+                f"{selected_guard}{error_clause} "
+                f"AND {match_condition})"
             )
 
         negative_ops = {"not_equals", "not_in", "not_contains"}

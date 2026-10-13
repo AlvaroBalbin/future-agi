@@ -9,11 +9,14 @@ const printableValue = (value) => {
 
 const BreakdownRow = ({ row, onSelectSpan }) => {
   const [showExplanation, setShowExplanation] = useState(false);
-  const displayValue = row.error
+  const hasError = row.error || row.status === "errored";
+  const displayValue = hasError
     ? "Error"
     : row.status === "skipped"
       ? row.skipped_reason || "Skipped"
-      : row.status || printableValue(row.value);
+      : row.status === "pending" || row.status === "running"
+        ? row.status
+        : printableValue(row.value);
   return (
     <Box sx={{ py: 0.75, borderTop: "1px solid", borderColor: "divider" }}>
       <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
@@ -27,7 +30,10 @@ const BreakdownRow = ({ row, onSelectSpan }) => {
         <Typography variant="body2" sx={{ flex: 1 }}>
           {row.span_name || row.span_id}
         </Typography>
-        <Typography color={row.error ? "error.main" : "text.secondary"} variant="body2">
+        <Typography
+          color={hasError ? "error.main" : "text.secondary"}
+          variant="body2"
+        >
           {displayValue}
         </Typography>
       </Box>
@@ -51,6 +57,9 @@ const BreakdownRow = ({ row, onSelectSpan }) => {
   );
 };
 
-BreakdownRow.propTypes = { row: PropTypes.object.isRequired, onSelectSpan: PropTypes.func };
+BreakdownRow.propTypes = {
+  row: PropTypes.object.isRequired,
+  onSelectSpan: PropTypes.func,
+};
 
 export default BreakdownRow;

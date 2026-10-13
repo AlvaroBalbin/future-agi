@@ -5,6 +5,9 @@ moves the live predicate inside the version collapse, or drops the count
 columns the Observe pivots read.
 """
 
+# Django must be initialized before importing query builders for standalone use.
+# ruff: noqa: E402
+
 import os
 import sys
 

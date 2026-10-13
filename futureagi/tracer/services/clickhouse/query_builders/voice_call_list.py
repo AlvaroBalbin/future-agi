@@ -23,6 +23,7 @@ from typing import Any
 from django.conf import settings
 
 from tracer.services.clickhouse.eval_logger_table import (
+    count_mode_choice_array,
     eval_logger_source,
     latest_completed_eval_rows,
 )
@@ -152,6 +153,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         bounded_identity_only: bool = False,
         bounded_sampling_salt: str | None = None,
         bounded_sampling_rate: float | None = None,
+        eval_count_mode: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id, **kwargs)
@@ -164,6 +166,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         self._annotation_label_set_known = annotation_label_ids is not None
         self.annotation_label_ids = annotation_label_ids or []
         self.eval_filter_metadata = eval_filter_metadata
+        self.eval_count_mode = eval_count_mode
         self._bounded_internal_scan = bool(bounded_internal_scan)
         self._bounded_identity_only = bool(bounded_identity_only)
         if (bounded_sampling_salt is None) != (bounded_sampling_rate is None):
@@ -250,6 +253,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
                 self.annotation_label_ids if self._annotation_label_set_known else None
             ),
             eval_filter_metadata=self.eval_filter_metadata,
+            eval_count_mode=self.eval_count_mode,
             # The voice wrapper is normally an internal trace-selector proxy.
             # Candidate-witness capability checks must retain the public list
             # planning contract, otherwise the trace builder intentionally
@@ -949,6 +953,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         self.params["end_date"] = end_date
 
         fb = self._FILTER_BUILDER_CLS(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
@@ -1021,6 +1026,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         self.params["end_date"] = end_date
 
         fb = ClickHouseFilterBuilder(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
@@ -1160,6 +1166,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
     def build_count_query(self) -> tuple[str, dict[str, Any]]:
         """Build a query to count total matching voice calls."""
         fb = ClickHouseFilterBuilder(
+            eval_count_mode=self.eval_count_mode,
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
@@ -1239,7 +1246,9 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         table, _ = self._EVAL_LOGGER_SOURCE()
         is_v2 = table.endswith("_v2")
         version = "_version" if is_v2 else "_peerdb_version"
-        status_aggregate = "'completed'" if is_v2 else f"argMax(status, {version})"
+        status_aggregate = (
+            "'completed'" if is_v2 else f"argMax(tuple(status), {version}).1"
+        )
         skipped_reason_aggregate = (
             "CAST(NULL AS Nullable(String))"
             if is_v2
@@ -1250,7 +1259,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             if is_v2
             else (
                 f"greatest(argMax(_peerdb_is_deleted, {version}), "
-                f"coalesce(argMax(deleted, {version}), 0))"
+                f"coalesce(argMax(tuple(deleted), {version}).1, 0))"
             )
         )
 
@@ -1336,11 +1345,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             ) AS error_count,
             count() AS eval_count,
             groupArrayIf(
-                if(
-                    notEmpty(JSONExtract(latest_output_str_list, 'Array(String)')),
-                    JSONExtract(latest_output_str_list, 'Array(String)'),
-                    if(ifNull(latest_output_str, '') != '', [ifNull(latest_output_str, '')], [])
-                ),
+                {count_mode_choice_array("latest_") if count_mode else "latest_output_str_list"},
                 latest_error = 0 AND ifNull(latest_output_str, '') != 'ERROR' AND ifNull(latest_status, '') NOT IN ('pending', 'running', 'skipped', 'errored')
             ) AS str_lists,
             countIf(latest_status = 'skipped') AS skipped_count,

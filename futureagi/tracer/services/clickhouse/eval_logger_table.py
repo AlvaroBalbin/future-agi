@@ -110,6 +110,25 @@ EVAL_COMPLETED_PREDICATE = (
 )
 
 
+def count_mode_choice_array(prefix: str = "") -> str:
+    """Array-valued choices for count tiles, without reclassifying scores.
+
+    The percentage path keeps its raw JSON projection. Count tiles additionally
+    accept scalar choice labels, but numeric/string score outputs must not gain
+    synthetic choice columns just because ``output_str`` is populated.
+    """
+
+    values = f"JSONExtract({prefix}output_str_list, 'Array(String)')"
+    scalar = f"{prefix}output_str"
+    return (
+        f"if(notEmpty({values}), {values}, "
+        f"if(ifNull({scalar}, '') != '' "
+        f"AND isNull({prefix}output_bool) AND isNull({prefix}output_float) "
+        f"AND isNull(toFloat64OrNull({scalar})), "
+        f"[ifNull({scalar}, '')], []))"
+    )
+
+
 def latest_completed_eval_rows(
     collapsed_sql: str,
     live_predicate: str,

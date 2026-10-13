@@ -42,6 +42,7 @@ from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
 
 from model_hub.models.score import Score
+from model_hub.utils.eval_list import derive_output_type
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import ApiErrorCode
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
@@ -161,7 +162,6 @@ from tracer.services.clickhouse.v2.trace_detail_reads import (
     TraceDetailReadUnavailable,
     read_trace_detail,
 )
-from model_hub.utils.eval_list import derive_output_type
 from tracer.services.eval_tiles import (
     build_eval_rollup,
     count_column_metadata,
@@ -638,6 +638,8 @@ def _safe_parse_metadata(raw):
 
 def _pivot_voice_detail_eval_rows(
     eval_rows: tuple[dict[str, Any], ...] | list[dict[str, Any]],
+    *,
+    output_types: Mapping[str, str | None] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Aggregate exact per-span eval rows into the voice-detail contract.
 
@@ -682,20 +684,29 @@ def _pivot_voice_detail_eval_rows(
                 eval_row.get("span_id") or eval_row.get("observation_span_id") or ""
             )
             by_span.setdefault(span_id, []).append(eval_row)
-        completed = [select_latest_completed(span_rows) for span_rows in by_span.values()]
+        completed = [
+            select_latest_completed(span_rows) for span_rows in by_span.values()
+        ]
 
         # Completed rows have precedence over a partial error, matching the
         # list endpoint's completed > errored > lifecycle state contract.
         if completed:
+            output_type = (output_types or {}).get(config_id) or ""
+            kind = output_type.replace("/", "_").replace(" ", "_").upper()
+            # Scalar output_str is also populated by numeric and Pass/Fail
+            # evaluators. Only choice templates may use it as a choice label.
+            choice_rows = (
+                completed if kind in {"", "CHOICE", "CHOICES", "DETERMINISTIC"} else []
+            )
             parsed_choice_lists: list[list[str]] = []
-            for eval_row in completed:
+            for eval_row in choice_rows:
                 raw_choices = eval_row.get("output_str_list")
                 if isinstance(raw_choices, str):
                     try:
                         raw_choices = json.loads(raw_choices)
                     except (json.JSONDecodeError, TypeError):
                         raw_choices = None
-                if not raw_choices:
+                if not raw_choices and kind in {"CHOICE", "CHOICES", "DETERMINISTIC"}:
                     scalar_choice = eval_row.get("output_str")
                     if (
                         isinstance(scalar_choice, str)
@@ -723,8 +734,12 @@ def _pivot_voice_detail_eval_rows(
                             if isinstance(parsed_choice, list)
                             else [parsed_choice]
                         )
-                if isinstance(raw_choices, (list, tuple)) and raw_choices:
-                    parsed_choice_lists.append([str(value) for value in raw_choices])
+                if isinstance(raw_choices, (list, tuple)):
+                    labels = [
+                        str(value) for value in raw_choices if value not in (None, "")
+                    ]
+                    if labels:
+                        parsed_choice_lists.append(labels)
 
             if parsed_choice_lists:
                 choice_counts: dict[str, int] = {}
@@ -4211,7 +4226,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     processed_log["message_count"] = len(stored)
 
         eval_outputs = {}
-        trace_evals = _pivot_voice_detail_eval_rows(detail.evals)
         rollup_config_lookup = {}
         for config in eval_configs:
             config_id = str(config.id)
@@ -4230,6 +4244,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 else [],
                 "choices_map": dict(template_config.get("choices_map", {}) or {}),
             }
+        trace_evals = _pivot_voice_detail_eval_rows(
+            detail.evals,
+            output_types={
+                config_id: info["output_type"]
+                for config_id, info in rollup_config_lookup.items()
+            },
+        )
         if detail.eval_unavailable:
             eval_rollup = {
                 "scope": "trace",
@@ -4371,6 +4392,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             project_id=str(project_id),
             page_number=0,
             page_size=TRACE_NAVIGATION_CANDIDATE_LIMIT,
+            eval_count_mode=True,
             filters=list(filters or []),
             bounded_internal_scan=True,
             bounded_identity_only=True,
@@ -4784,6 +4806,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             eval_config_ids=eval_config_ids,
             annotation_label_ids=annotation_label_ids,
             annotation_label_ids_by_project=annotation_label_ids_by_project,
+            eval_count_mode=True,
         )
         pin_filter_seed_witness_slack(builder, cursor_state)
         requires_cursor = builder.requires_cursor_for_long_filtered_read()
@@ -5394,10 +5417,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     output_types=eval_output_types,
                     declared_choices=eval_declared_choices,
                 )
-                eval_target_types, eval_observed_choice_labels = (
-                    count_column_metadata(
-                        expanded_eval_rows, eval_map, eval_output_types
-                    )
+                eval_target_types, eval_observed_choice_labels = count_column_metadata(
+                    expanded_eval_rows, eval_map, eval_output_types
                 )
             except (TypeError, ValueError) as exc:
                 logger.warning(
@@ -5875,6 +5896,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             page_size=page_size,
             eval_config_ids=[],
             remove_simulation_calls=sim_flag,
+            eval_count_mode=True,
             annotation_label_ids=[],
         )
         preflight_classify_batch_size = int(
@@ -5929,6 +5951,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             page_size=page_size,
             eval_config_ids=eval_config_ids,
             remove_simulation_calls=sim_flag,
+            eval_count_mode=True,
             annotation_label_ids=annotation_label_ids,
         )
         pin_filter_seed_witness_slack(builder, cursor_state)
@@ -6291,10 +6314,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         if getattr(config, "eval_template", None) is not None
                     },
                 )
-                eval_target_types, eval_observed_choice_labels = (
-                    count_column_metadata(
-                        eval_result.data, eval_map, eval_output_types
-                    )
+                eval_target_types, eval_observed_choice_labels = count_column_metadata(
+                    eval_result.data, eval_map, eval_output_types
                 )
 
         # Phase 3: Annotations — fetch from PG Score (unified annotation system)

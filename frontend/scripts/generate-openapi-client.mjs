@@ -317,7 +317,10 @@ async function runGeneration(schemaPath) {
 
   const interruptionNullableFields = {
     RunCallApi: ["avg_stop_time_after_interruption", "ai_interruption_count"],
-    GroupAggregatesApi: ["avg_stop_time_after_interruption", "ai_interruptions"],
+    GroupAggregatesApi: [
+      "avg_stop_time_after_interruption",
+      "ai_interruptions",
+    ],
   };
   const voiceCallDetailNullableFields = [
     "provider_call_id",
@@ -348,6 +351,7 @@ async function runGeneration(schemaPath) {
     "messages",
     "analysis_data",
     "evaluation_data",
+    "eval_rollup",
     "call_execution_id",
     "test_execution_id",
     "scenario_id",
@@ -368,7 +372,9 @@ async function runGeneration(schemaPath) {
   if (fs.existsSync(schemasOutputPath)) {
     let schemas = fs.readFileSync(schemasOutputPath, "utf8");
 
-    for (const [typeName, fields] of Object.entries(interruptionNullableFields)) {
+    for (const [typeName, fields] of Object.entries(
+      interruptionNullableFields,
+    )) {
       for (const field of fields) {
         schemas = assertReplaceInNamedBlock(
           schemas,
@@ -764,7 +770,9 @@ export type ${jsonAlias} = JsonValueApi;`,
   if (fs.existsSync(zodOutputPath)) {
     let zod = fs.readFileSync(zodOutputPath, "utf8");
 
-    for (const field of new Set(Object.values(interruptionNullableFields).flat())) {
+    for (const field of new Set(
+      Object.values(interruptionNullableFields).flat(),
+    )) {
       zod = assertReplaceInNamedBlock(
         zod,
         "export const SimulateV3TestExecutionCallsResponse =",
@@ -819,35 +827,45 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       "DashboardFilterValueOption zod value → recursive JSON value",
     );
 
-    const traceDetailResponse =
-      "export const TracerTraceReadResponse = zod.object({";
-    for (const [field, replacement] of [
-      [
-        '"value": zod.object({\n\n}).passthrough().optional().describe(\'Any valid JSON value.\'),',
-        '"value": jsonValueSchema.nullish().describe(\'Any valid JSON value.\'),',
-      ],
-      [
-        '"choices_map": zod.object({\n\n}).passthrough().optional().describe(\'Any valid JSON value.\'),',
-        '"choices_map": jsonValueSchema.nullish().describe(\'Any valid JSON value.\'),',
-      ],
-      [
-        '"aggregate": zod.object({\n\n}).passthrough().describe(\'Any valid JSON value.\'),',
-        '"aggregate": jsonValueSchema.describe(\'Any valid JSON value.\'),',
-      ],
-      ['"output_type": zod.string().min(1).optional(),', '"output_type": zod.string().min(1).nullish(),'],
-      ['"template_type": zod.string().min(1).optional(),', '"template_type": zod.string().min(1).nullish(),'],
-      ['"target_type": zod.enum([\'span\', \'trace\']).optional(),', '"target_type": zod.enum([\'span\', \'trace\']).nullish(),'],
-      ['"explanation": zod.string().min(1).optional(),', '"explanation": zod.string().min(1).nullish(),'],
-      ['"status": zod.string().min(1).optional(),', '"status": zod.string().min(1).nullish(),'],
+    // Both detail endpoints expose the same typed rollup. Scope scalar
+    // rewrites to that property so provider-level fields keep their own rules.
+    for (const responseName of [
+      "TracerTraceReadResponse",
+      "TracerTraceVoiceCallDetailResponse",
     ]) {
-      zod = assertReplaceInNamedBlock(
+      const declaration = `export const ${responseName} = zod.object({`;
+      zod = assertReplaceRegexInNamedBlock(
         zod,
-        traceDetailResponse,
-        field,
-        replacement,
-        `TracerTraceReadResponse eval rollup ${field}`,
+        declaration,
+        /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+        "jsonValueSchema",
+        `${responseName} JSON values → recursive JSON value`,
       );
+      for (const [field, pattern] of [
+        ["output_type", "zod\\.string\\(\\)\\.min\\(1\\)"],
+        ["template_type", "zod\\.string\\(\\)\\.min\\(1\\)"],
+        ["target_type", "zod\\.enum\\(\\['span', 'trace'\\]\\)"],
+        ["explanation", "zod\\.string\\(\\)\\.min\\(1\\)"],
+        ["status", "zod\\.string\\(\\)\\.min\\(1\\)"],
+      ]) {
+        zod = assertReplaceRegexInNamedBlock(
+          zod,
+          declaration,
+          new RegExp(
+            `("eval_rollup": zod\\.object\\(\\{[\\s\\S]*?"${field}": ${pattern})\\.optional\\(\\)`,
+          ),
+          "$1.nullish()",
+          `${responseName} eval rollup ${field} nullable`,
+        );
+      }
     }
+    zod = assertReplaceInNamedBlock(
+      zod,
+      "export const TracerTraceVoiceCallDetailResponse = zod.object({",
+      '"error": zod.boolean().optional()\n}).optional(),',
+      '"error": zod.boolean().optional()\n}).nullish(),',
+      "TracerTraceVoiceCallDetailResponse.eval_rollup nullable",
+    );
 
     const listResponseExports = [
       "TracerTraceListTracesResponse",
@@ -891,13 +909,6 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         `conversation evidence ${label} nullable`,
       );
     }
-    zod = assertReplaceRegexInNamedBlock(
-      zod,
-      "export const TracerTraceVoiceCallDetailResponse = zod.object({",
-      /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
-      "jsonValueSchema",
-      "TracerTraceVoiceCallDetailResponse JSON cells → recursive JSON value",
-    );
 
     for (const responseName of [
       "ModelHubDevelopsGetDatasetTableListResponse",
