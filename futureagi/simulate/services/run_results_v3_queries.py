@@ -9,7 +9,7 @@ from collections.abc import Callable
 from typing import Any
 
 from django.core.cache import cache
-from django.db import connection
+from django.db import connections, router
 from django.db.models import (
     Avg,
     BooleanField,
@@ -68,9 +68,22 @@ from simulate.services.run_results_v3_expressions import (
     project_annotation,
 )
 from simulate.services.run_results_v3_scoring import (
+    ERRORED_CALL_STATUSES,
+    ERRORED_EVAL_STATUSES,
+    HARNESS_ERROR,
+    HARNESS_FAILED,
+    HARNESS_INCONCLUSIVE,
+    HARNESS_PASSED,
+    IN_PROGRESS_CALL_STATUSES,
+    NATIVE_FAILED,
+    NATIVE_PASSED,
+    QUEUED_CALL_STATUSES,
+    UNMEASURED_EVAL_STATUSES,
     EvalScoringSpec,
+    LiveEvals,
+    live_eval_specs,
     resolve_eval_scoring_spec,
-    warn_invalid_eval_threshold,
+    score_tokens,
 )
 
 OUTCOMES = tuple(OUTCOME_LABELS)
@@ -233,7 +246,7 @@ def _eval_measured_q(eval_id: str, field: str | Expression = "eval_outputs") -> 
         output_field=TextField(),
     )
     return Q(HasKey(_json_value(field), eval_id)) & ~Q(
-        In(Lower(Trim(status)), ["pending", "skipped", "error", "failed"])
+        In(Lower(Trim(status)), list(UNMEASURED_EVAL_STATUSES))
     )
 
 
@@ -244,7 +257,7 @@ def _eval_errored_q(eval_id: str) -> Q:
         output_field=TextField(),
     )
     return Q(eval_outputs__has_key=eval_id) & Q(
-        In(Lower(Trim(status)), ["error", "failed"])
+        In(Lower(Trim(status)), list(ERRORED_EVAL_STATUSES))
     )
 
 
@@ -357,14 +370,7 @@ def _expanded_eval_score(
             ),
             output_field=FloatField(),
         )
-    positive = ["true"]
-    negative = ["false"]
-    if spec is None or spec.output_type == "pass_fail":
-        positive += ["pass", "yes", "success", "successful"]
-        negative += ["fail", "no", "failure", "unsuccessful"]
-    if spec is None:
-        positive.append("passed")
-        negative.append("failed")
+    positive, negative = score_tokens(spec)
     raw_score = Case(
         When(
             In(normalized, positive),
@@ -560,6 +566,11 @@ def _configured_eval_verdict(
     return score, passed, failed
 
 
+def _sql_texts(values: tuple[str, ...]) -> str:
+    """Constant words as SQL string literals."""
+    return ", ".join(f"'{value}'" for value in values)
+
+
 # Twin: ``_native_verdicts`` in run_results_v3_scan; change both. Guarded by
 # test_every_stored_entry_shape_scores_like_the_sql_read_model.
 class _NativeHarnessVerdict(Func):
@@ -578,16 +589,12 @@ class _NativeHarnessVerdict(Func):
         ids_sql, ids_params = compiler.compile(self.source_expressions[1])
         status_sql = "lower(btrim(COALESCE(check_result.value->>'status', '')))"
         if self.verdict == "error":
-            condition = f"{status_sql} IN ('error', 'failed')"
+            condition = f"{status_sql} IN ({_sql_texts(ERRORED_EVAL_STATUSES)})"
             verdict_params = []
         else:
-            tokens = (
-                ["pass", "passed", "true", "success", "successful"]
-                if self.verdict == "passed"
-                else ["fail", "failed", "false", "failure", "unsuccessful"]
-            )
+            tokens = list(NATIVE_PASSED if self.verdict == "passed" else NATIVE_FAILED)
             condition = (
-                f"{status_sql} NOT IN ('pending', 'skipped', 'error', 'failed') "
+                f"{status_sql} NOT IN ({_sql_texts(UNMEASURED_EVAL_STATUSES)}) "
                 "AND jsonb_typeof(check_result.value->'output') IN ('string', 'boolean') "
                 "AND lower(btrim(check_result.value->>'output')) = ANY(%s)"
             )
@@ -604,26 +611,26 @@ class _NativeHarnessVerdict(Func):
 
 
 def run_calls_queryset(
-    execution: TestExecution, execution_ids: list[Any] | None = None
+    execution: TestExecution,
+    execution_ids: list[Any] | None = None,
+    *,
+    live_evals: LiveEvals | None = None,
 ) -> QuerySet[CallExecution]:
-    live_configs = list(
-        SimulateEvalConfig.objects.filter(
-            run_test=execution.run_test, deleted=False
-        ).select_related("eval_template")
-    )
+    if live_evals is None:
+        live_evals = live_eval_specs(execution.run_test_id)
+    live_evals.warn_invalid_thresholds()
     failed_eval = Q(pk__in=[])
     passed_eval = Q(pk__in=[])
     errored_eval = Q(pk__in=[])
-    for config in live_configs:
-        eval_id = str(config.id)
-        spec = resolve_eval_scoring_spec(config)
-        warn_invalid_eval_threshold(config, spec)
-        _, passed_q, failed_q = _configured_eval_verdict(eval_id, config, spec)
+    for eval_id, live in live_evals.items():
+        _, passed_q, failed_q = _configured_eval_verdict(
+            eval_id, live.config, live.spec
+        )
         failed_eval |= failed_q
         passed_eval |= passed_q
         errored_eval |= _eval_errored_q(eval_id)
 
-    configured_ids = [str(config.id) for config in live_configs]
+    configured_ids = list(live_evals)
     failed_eval |= Q(_NativeHarnessVerdict(configured_ids, "failed"))
     passed_eval |= Q(_NativeHarnessVerdict(configured_ids, "passed"))
     errored_eval |= Q(_NativeHarnessVerdict(configured_ids, "error"))
@@ -739,44 +746,26 @@ def run_calls_queryset(
         # Twin: ``_outcome`` in run_results_v3_scan; change both. Guarded by
         # test_every_stored_entry_shape_scores_like_the_sql_read_model.
         result_outcome=Case(
-            When(status__in=["pending", "queued"], then=Value("queued")),
-            When(status__in=["ongoing", "analyzing"], then=Value("in_progress")),
+            When(status__in=list(QUEUED_CALL_STATUSES), then=Value("queued")),
+            When(status__in=list(IN_PROGRESS_CALL_STATUSES), then=Value("in_progress")),
             When(
-                call_metadata__harness_outcome_status__in=[
-                    "error",
-                    "errored",
-                    "cancelled",
-                    "canceled",
-                ],
+                call_metadata__harness_outcome_status__in=list(HARNESS_ERROR),
                 then=Value("error"),
             ),
-            When(status__in=["failed", "cancelled"], then=Value("error")),
+            When(status__in=list(ERRORED_CALL_STATUSES), then=Value("error")),
             When(~Q(status="completed"), then=Value("inconclusive")),
             When(
-                call_metadata__harness_outcome_status__in=[
-                    "failed",
-                    "fail",
-                    "failure",
-                ],
+                call_metadata__harness_outcome_status__in=list(HARNESS_FAILED),
                 then=Value("failed"),
             ),
             When(failed_eval, then=Value("failed")),
             When(errored_eval, then=Value("inconclusive")),
             When(
-                call_metadata__harness_outcome_status__in=[
-                    "inconclusive",
-                    "unknown",
-                    "skipped",
-                ],
+                call_metadata__harness_outcome_status__in=list(HARNESS_INCONCLUSIVE),
                 then=Value("inconclusive"),
             ),
             When(
-                call_metadata__harness_outcome_status__in=[
-                    "passed",
-                    "pass",
-                    "success",
-                    "successful",
-                ],
+                call_metadata__harness_outcome_status__in=list(HARNESS_PASSED),
                 then=Value("passed"),
             ),
             When(passed_eval, then=Value("passed")),
@@ -996,7 +985,7 @@ def _result_sub_goals_expression() -> Coalesce:
 
 def _collation_order(values: list[str]) -> dict[str, int]:
     """Rank values as the database collation sorts them."""
-    with connection.cursor() as cursor:
+    with connections[router.db_for_read(CallExecution)].cursor() as cursor:
         cursor.execute(
             "SELECT value FROM unnest(%s::text[]) AS value ORDER BY value", [values]
         )

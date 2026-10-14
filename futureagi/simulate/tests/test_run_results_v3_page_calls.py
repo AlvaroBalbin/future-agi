@@ -472,9 +472,8 @@ def test_slim_page_loads_one_query_and_only_read_metadata_keys(run):
     assert all("call_metadata" in call.get_deferred_fields() for call in slim)
     assert set(by_id[calls[0].id].row_metadata) <= set(CALL_ROW_METADATA_KEYS)
     assert "system_prompt" not in by_id[calls[0].id].row_metadata
-    assert by_id[calls[0].id].row_metadata["hosted_harness_receipt"] == (
-        calls[0].call_metadata["hosted_harness_receipt"]
-    )
+    receipt = by_id[calls[0].id].row_metadata["hosted_harness_receipt"]
+    assert receipt == calls[0].call_metadata["hosted_harness_receipt"]
     assert by_id[calls[2].id].row_metadata == "not an object"
     assert by_id[calls[3].id].row_metadata == ["not", "an", "object"]
     assert by_id[calls[5].id].row_metadata == calls[5].call_metadata

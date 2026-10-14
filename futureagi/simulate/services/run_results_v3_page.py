@@ -40,6 +40,7 @@ from simulate.services.run_results_v3_queries import (
     apply_run_call_query,
 )
 from simulate.services.run_results_v3_scan import scan_call_values
+from simulate.services.run_results_v3_scoring import LiveEvals, live_eval_specs
 
 logger = logging.getLogger(__name__)
 
@@ -72,25 +73,19 @@ CACHE_TIMEOUT = 5 * 60
 
 
 def _score_expressions(
-    execution: TestExecution, columns: list[dict[str, str]]
+    execution: TestExecution,
+    columns: list[dict[str, str]],
+    live_evals: LiveEvals | None = None,
 ) -> dict[str, Any]:
-    configs = (
-        {
-            str(config.id): config
-            for config in SimulateEvalConfig.objects.filter(
-                run_test=execution.run_test, deleted=False
-            ).select_related("eval_template")
-        }
-        if columns
-        else {}
-    )
+    if columns and live_evals is None:
+        live_evals = live_eval_specs(execution.run_test_id)
     expressions = {}
     for index, column in enumerate(columns):
         eval_id = str(column["id"])
-        config = configs.get(eval_id)
+        live = live_evals.get(eval_id) if live_evals is not None else None
         expressions[f"score_{index}"] = (
-            _configured_eval_verdict(eval_id, config)[0]
-            if config is not None
+            _configured_eval_verdict(eval_id, live.config, live.spec)[0]
+            if live is not None
             else _eval_score(eval_id)
         )
     return expressions
@@ -317,15 +312,16 @@ def run_calls_page(
     query: dict[str, Any],
     columns: list[dict[str, str]],
     base_queryset: Callable[[], QuerySet],
+    live_evals: LiveEvals | None = None,
 ) -> dict[str, Any]:
-    scores = functools.cache(lambda: _score_expressions(execution, columns))
+    scores = functools.cache(lambda: _score_expressions(execution, columns, live_evals))
     ordering = _scan_ordering(query)
     rows, rows_fresh = _cached_call_values(
         execution,
         _subset(query),
         columns,
         lambda: (
-            scan_call_values(execution, columns, ordering)
+            scan_call_values(execution, columns, ordering, live_evals=live_evals)
             if ordering
             else _call_values(
                 apply_run_call_query(base_queryset(), query), columns, scores()
@@ -338,8 +334,9 @@ def run_calls_page(
             execution,
             {},
             columns,
-            # The model's default order; the summary and facets read these rows.
-            lambda: scan_call_values(execution, columns, "-updated_at"),
+            lambda: scan_call_values(
+                execution, columns, "-started_at", live_evals=live_evals
+            ),
         )
         if has_subset
         else (rows, rows_fresh)
@@ -383,11 +380,6 @@ def run_calls_page(
         "status_counts": summarize_call_values(status_rows)["outcomes"],
         "count": len(rows),
     }
-
-
-def read_call_values(queryset: QuerySet) -> list[dict[str, Any]]:
-    """Uncached, unscored call values."""
-    return _call_values(queryset, [], {})
 
 
 class JsonbKeySubset(Func):
@@ -445,6 +437,7 @@ def page_groups(
     query: dict[str, Any],
     columns: list[dict[str, str]],
     base_queryset: Callable[[], QuerySet],
+    live_evals: LiveEvals | None = None,
 ) -> list[dict[str, Any]]:
     group_by = query.get("group_by")
     if group_by not in GROUP_FIELDS or not page["page_ids"]:
@@ -456,6 +449,6 @@ def page_groups(
         rows = _call_values(
             apply_run_call_query(base_queryset(), query),
             columns,
-            _score_expressions(execution, columns),
+            _score_expressions(execution, columns, live_evals),
         )
     return group_call_values(rows, group_by, page["page_ids"], columns)

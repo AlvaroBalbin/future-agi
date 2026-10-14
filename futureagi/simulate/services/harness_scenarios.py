@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 from uuid import UUID
 
@@ -11,7 +12,6 @@ from django.db.models import (
     Case,
     F,
     Func,
-    IntegerField,
     Q,
     QuerySet,
     Value,
@@ -253,6 +253,78 @@ def _job_in(test_execution_id: UUID, field: str) -> _InArray:
     return _InArray(F("job_id"), ArraySubquery(jobs.values(field)))
 
 
+def _flag(condition: Q) -> Case:
+    return Case(
+        When(condition, then=Value(True)),
+        default=Value(False),
+        output_field=BooleanField(),
+    )
+
+
+def authored_candidates(
+    test_execution_id: UUID, *, call_ids: list[Any] | QuerySet, keys: Iterable[str]
+) -> QuerySet[HostedHarnessScenario]:
+    """Scenarios that may author a run's calls: linked to one of ``call_ids``, or
+    keyed on the run's own job (``own_run``) or its environment (``in_scope``).
+
+    ``call_ids`` is a list, or a ``values("id")`` queryset read once as an array.
+    """
+    # The run's own job and its environment as arrays: an OR across job
+    # joins makes Postgres scan every authored scenario.
+    own_run = Q(_job_in(test_execution_id, "id"))
+    scope = own_run | Q(_job_in(test_execution_id, "environment_id"))
+    # An IN (subquery) under the OR would scan every authored scenario too.
+    linked = (
+        Q(_InArray(F("call_execution_id"), ArraySubquery(call_ids)))
+        if isinstance(call_ids, QuerySet)
+        else Q(call_execution_id__in=call_ids)
+    )
+    return (
+        HostedHarnessScenario.all_objects.filter(
+            linked | (scope & Q(scenario_key__in=list(keys)))
+        )
+        .annotate(own_run=_flag(own_run), in_scope=_flag(scope))
+        .order_by()
+    )
+
+
+class AuthoredPick:
+    """A call's authored scenario among the candidates: linked to the call, else
+    keyed on the run's own job, then on its environment; the newest wins within
+    a rank. Keyed rows count only from ``jobs``.
+    """
+
+    def __init__(self, rows: Iterable[Any], own_jobs: set[Any], jobs: set[Any]):
+        self.own_jobs = own_jobs
+        self.by_call: dict[Any, list[Any]] = {}
+        self.by_key: dict[str, list[Any]] = {}
+        for row in rows:
+            if row.call_execution_id is not None:
+                self.by_call.setdefault(row.call_execution_id, []).append(row)
+            if row.job_id in jobs:
+                self.by_key.setdefault(row.scenario_key, []).append(row)
+
+    def _keyed_rank(self, row: Any, call_id: Any) -> int:
+        if row.call_execution_id == call_id:
+            return 0
+        return 1 if row.job_id in self.own_jobs else 2
+
+    def pick(self, call_id: Any, scenario_key: str | None) -> Any:
+        candidates = [(0, row) for row in self.by_call.get(call_id, ())]
+        if scenario_key is not None:
+            candidates += [
+                (self._keyed_rank(row, call_id), row)
+                for row in self.by_key.get(scenario_key, ())
+            ]
+        best = None
+        best_rank: tuple[int, float] | None = None
+        for rank, row in candidates:
+            order = (rank, -row.created_at.timestamp())
+            if best_rank is None or order < best_rank:
+                best, best_rank = row, order
+        return best
+
+
 def call_row_metadata(call: CallExecution) -> Any:
     """A call's metadata as a page loaded it: the read keys, else the whole field."""
     try:
@@ -278,28 +350,22 @@ def authored_scenarios_for_calls(
     call_ids = [call.id for call in calls]
     keys = set(source_keys.values()) - {None}
     if test_execution_id is not None:
-        # The run's own job and its environment as arrays: an OR across job
-        # joins makes Postgres scan every authored scenario.
-        own_run = Q(_job_in(test_execution_id, "id"))
-        scope = own_run | Q(_job_in(test_execution_id, "environment_id"))
-    else:
-        run_jobs = HostedHarnessJob.no_workspace_objects.filter(run_test_id=run_test_id)
-        scope = Q(job_id__in=run_jobs.values("id")) | Q(
-            job_id__in=run_jobs.values("environment_id")
+        candidates = list(
+            authored_candidates(test_execution_id, call_ids=call_ids, keys=keys)
         )
+        authored = AuthoredPick(
+            candidates,
+            {row.job_id for row in candidates if row.own_run},
+            {row.job_id for row in candidates if row.in_scope},
+        )
+        return {call.id: authored.pick(call.id, source_keys[call.id]) for call in calls}
+    run_jobs = HostedHarnessJob.no_workspace_objects.filter(run_test_id=run_test_id)
+    scope = Q(job_id__in=run_jobs.values("id")) | Q(
+        job_id__in=run_jobs.values("environment_id")
+    )
     rows = HostedHarnessScenario.all_objects.filter(
         Q(call_execution_id__in=call_ids) | (scope & Q(scenario_key__in=keys))
-    )
-    if test_execution_id is not None:
-        rows = rows.annotate(
-            match_rank=Case(
-                When(own_run, then=Value(0)),
-                default=Value(1),
-                output_field=IntegerField(),
-            )
-        ).order_by("match_rank", "-created_at")
-    else:
-        rows = rows.order_by("-created_at")
+    ).order_by("-created_at")
     linked, by_key = {}, {}
     for row in rows:
         if row.call_execution_id:

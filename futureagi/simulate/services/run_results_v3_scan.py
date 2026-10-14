@@ -11,31 +11,49 @@ from __future__ import annotations
 import json
 import math
 import re
+import uuid
 from collections.abc import Iterable
-from datetime import datetime
 from decimal import Decimal
 from fractions import Fraction
 from typing import Any
 
 from django.db import connections, router
+from django.db.models import TextField
+from django.db.models.fields.json import KeyTextTransform
+from django.db.models.functions import Cast
 
-from model_hub.models.develop_dataset import Cell, Column
-from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
-from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
+from simulate.models import CallExecution, TestExecution
+from simulate.models.hosted_harness import HostedHarnessJob
 from simulate.models.scenarios import Scenarios
+from simulate.services.harness_scenarios import AuthoredPick, authored_candidates
+from simulate.services.run_results_v3 import _row_dimensions
+from simulate.services.run_results_v3_expressions import (
+    NUMERIC_JSON_PATTERN,
+    NUMERIC_TEXT_PATTERN,
+)
+from simulate.services.run_results_v3_queries import UNGROUPED
 from simulate.services.run_results_v3_scoring import (
+    ERRORED_CALL_STATUSES,
+    ERRORED_EVAL_STATUSES,
+    HARNESS_ERROR,
+    HARNESS_FAILED,
+    HARNESS_INCONCLUSIVE,
+    HARNESS_PASSED,
+    IN_PROGRESS_CALL_STATUSES,
+    NATIVE_FAILED,
+    NATIVE_PASSED,
+    QUEUED_CALL_STATUSES,
+    UNMEASURED_EVAL_STATUSES,
     EvalScoringSpec,
-    resolve_eval_scoring_spec,
-    warn_invalid_eval_threshold,
+    LiveEvals,
+    live_eval_specs,
+    score_tokens,
 )
 
-UNGROUPED = "Ungrouped"
-# The orderings the scan reproduces, as ``apply_run_call_query`` and the model's
-# default ordering write them.
+# The orderings the scan reproduces, as ``apply_run_call_query`` writes them.
 ORDERINGS = {
     "-started_at": "ce.started_at DESC, ce.id ASC",
     "started_at": "ce.started_at ASC, ce.id ASC",
-    "-updated_at": "ce.updated_at DESC",
 }
 
 
@@ -155,8 +173,8 @@ def _not_empty(text: str | None) -> str | None:
     return None if text == "" else text
 
 
-_STATUS_UNMEASURED = frozenset({"pending", "skipped", "error", "failed"})
-_STATUS_ERRORED = frozenset({"error", "failed"})
+_STATUS_UNMEASURED = frozenset(UNMEASURED_EVAL_STATUSES)
+_STATUS_ERRORED = frozenset(ERRORED_EVAL_STATUSES)
 
 
 def _status(evals: Any, eval_id: str) -> str:
@@ -175,10 +193,8 @@ def _errored(evals: Any, eval_id: str) -> Truth:
     return _and(_has_key(evals, eval_id), _status(evals, eval_id) in _STATUS_ERRORED)
 
 
-_NUMERIC_TEXT = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
-_JSON_NUMBER_TEXT = re.compile(
-    r"-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?"
-)
+_NUMERIC_TEXT = re.compile(NUMERIC_TEXT_PATTERN)
+_JSON_NUMBER_TEXT = re.compile(NUMERIC_JSON_PATTERN)
 # ``[[:space:]]`` under prod's en_US.UTF8 (PG 16); U+180E varies by glibc version.
 _SPACE = "[ \t\n\r\f\v\u1680\u180e\u2000-\u2006\u2008-\u200a\u2028\u2029\u205f\u3000]*"
 
@@ -282,13 +298,7 @@ class _EvalScore:
             if spec is not None and spec.output_type == "deterministic"
             else {}
         )
-        positive, negative = {"true"}, {"false"}
-        if spec is None or spec.output_type == "pass_fail":
-            positive |= {"pass", "yes", "success", "successful"}
-            negative |= {"fail", "no", "failure", "unsuccessful"}
-        if spec is None:
-            positive.add("passed")
-            negative.add("failed")
+        positive, negative = score_tokens(spec)
         self.positive, self.negative = frozenset(positive), frozenset(negative)
         self.choice_patterns = {
             label: re.compile(_SPACE + re.escape(label) + _SPACE, re.IGNORECASE)
@@ -338,9 +348,6 @@ class _EvalScore:
             if _or(_matches_any(output, pattern), _matches_any(choices, pattern)):
                 weighted += _numeric_literal(weight)
                 count += _ONE
-            else:
-                weighted += _ZERO
-                count += _ZERO
         if count > _ZERO:
             return float(min(max(_numeric_divide(weighted, count), _ZERO), _ONE))
         return raw
@@ -415,8 +422,8 @@ class _ConfiguredVerdict:
         return score, _and(measured, passed), _and(measured, failed)
 
 
-_NATIVE_PASSED = frozenset({"pass", "passed", "true", "success", "successful"})
-_NATIVE_FAILED = frozenset({"fail", "failed", "false", "failure", "unsuccessful"})
+_NATIVE_PASSED = frozenset(NATIVE_PASSED)
+_NATIVE_FAILED = frozenset(NATIVE_FAILED)
 
 
 def _native_verdicts(entry: Any) -> tuple[bool, bool, bool]:
@@ -434,10 +441,10 @@ def _native_verdicts(entry: Any) -> tuple[bool, bool, bool]:
     return token in _NATIVE_FAILED, False, token in _NATIVE_PASSED
 
 
-_HARNESS_ERROR = frozenset({"error", "errored", "cancelled", "canceled"})
-_HARNESS_FAILED = frozenset({"failed", "fail", "failure"})
-_HARNESS_INCONCLUSIVE = frozenset({"inconclusive", "unknown", "skipped"})
-_HARNESS_PASSED = frozenset({"passed", "pass", "success", "successful"})
+_HARNESS_ERROR = frozenset(HARNESS_ERROR)
+_HARNESS_FAILED = frozenset(HARNESS_FAILED)
+_HARNESS_INCONCLUSIVE = frozenset(HARNESS_INCONCLUSIVE)
+_HARNESS_PASSED = frozenset(HARNESS_PASSED)
 
 
 def _outcome(
@@ -448,11 +455,11 @@ def _outcome(
     passed: Truth,
 ) -> str:
     """The ``result_outcome`` CASE, in its order."""
-    if status in {"pending", "queued"}:
+    if status in QUEUED_CALL_STATUSES:
         return "queued"
-    if status in {"ongoing", "analyzing"}:
+    if status in IN_PROGRESS_CALL_STATUSES:
         return "in_progress"
-    if harness_status in _HARNESS_ERROR or status in {"failed", "cancelled"}:
+    if harness_status in _HARNESS_ERROR or status in ERRORED_CALL_STATUSES:
         return "error"
     if status != "completed":
         return "inconclusive"
@@ -637,103 +644,36 @@ SELECT ce.id, ce.status, ce.duration_seconds,
 FROM (
   SELECT id, status, duration_seconds, avg_agent_latency_ms, customer_cost_cents,
     avg_stop_time_after_interruption_ms, ai_interruption_count, row_id,
-    scenario_id, started_at, updated_at, conversation_metrics_data,
+    scenario_id, started_at, conversation_metrics_data,
     -- Decompress each large JSON column once per row, not once per reference.
     jsonb_path_query_first(call_metadata, '$') AS call_metadata,
     jsonb_path_query_first(eval_outputs, '$') AS eval_outputs
   FROM {calls_table}
-  WHERE test_execution_id = %s AND NOT deleted
+  WHERE test_execution_id = %s AND NOT deleted{call_filter}
   -- Keeps the planner from inlining this subquery and undoing the single read.
   OFFSET 0
 ) ce
 JOIN {scenarios_table} s ON s.id = ce.scenario_id
 ORDER BY {ordering}
 """
+_CALL_FILTER = " AND id = ANY(%s::uuid[])"
 _CALLS_TABLE = CallExecution._meta.db_table
-_HARNESS_SCENARIOS_TABLE = HostedHarnessScenario._meta.db_table
-_SCENARIO_COLUMNS = """id, job_id, scenario_key, call_execution_id, created_at,
-  use_case, sub_goals::text, persona ->> 'accent', persona ->> 'age_group',
-  coverage ->> 'overlay', coverage ->> 'task'"""
-_LINKED_SCENARIOS_SQL = f"""
-SELECT {_SCENARIO_COLUMNS} FROM {_HARNESS_SCENARIOS_TABLE}
-WHERE call_execution_id IN (
-  SELECT id FROM {_CALLS_TABLE} WHERE test_execution_id = %s
-)"""
-_KEYED_SCENARIOS_SQL = f"""
-SELECT {_SCENARIO_COLUMNS} FROM {_HARNESS_SCENARIOS_TABLE}
-WHERE job_id = ANY(%s::uuid[]) AND scenario_key = ANY(%s::text[])"""
-_GOAL_CELLS_SQL = f"""
-SELECT c.row_id, col.name, c.value, c.created_at
-FROM {Cell._meta.db_table} c JOIN {Column._meta.db_table} col ON col.id = c.column_id
-WHERE c.row_id = ANY(%s::uuid[]) AND col.name IN ('use_case', 'goal')"""
-
-# A scenario row: (id, job_id, scenario_key, call_execution_id, created_at,
-# use_case, sub_goals, accent, age, attack, task).
-Scenario = tuple[Any, ...]
-
-
-class _AuthoredScenarios:
-    """The ``authored`` subquery: a call's linked scenario, else one keyed on its job.
-
-    Rank: linked to the call, then the run's own job, then its environment;
-    the newest wins within a rank.
-    """
-
-    def __init__(self, rows: Iterable[Scenario], own_jobs: set[Any], jobs: set[Any]):
-        self.own_jobs = own_jobs
-        self.by_call: dict[Any, list[Scenario]] = {}
-        self.by_key: dict[str, list[Scenario]] = {}
-        for row in rows:
-            if row[3] is not None:
-                self.by_call.setdefault(row[3], []).append(row)
-            if row[1] in jobs:
-                self.by_key.setdefault(row[2], []).append(row)
-
-    def pick(self, call_id: Any, scenario_key: str | None) -> Scenario | None:
-        candidates = [(0, row) for row in self.by_call.get(call_id, ())]
-        if scenario_key is not None:
-            candidates += [
-                (
-                    0 if row[3] == call_id else 1 if row[1] in self.own_jobs else 2,
-                    row,
-                )
-                for row in self.by_key.get(scenario_key, ())
-            ]
-        best: Scenario | None = None
-        best_rank: tuple[int, float] | None = None
-        for rank, row in candidates:
-            order = (rank, -row[4].timestamp())
-            if best_rank is None or order < best_rank:
-                best, best_rank = row, order
-        return best
+_SCENARIO_FIELDS = (
+    "job_id",
+    "scenario_key",
+    "call_execution_id",
+    "created_at",
+    "use_case",
+    "sub_goals_text",
+    "accent",
+    "age_group",
+    "overlay",
+    "task",
+)
 
 
 def _level(value: str | None) -> str:
     return UNGROUPED if value is None or value == "" else value
-
-
-def _goal_cells(cursor: Any, row_ids: list[Any]) -> dict[Any, str | None]:
-    """``dataset_goal``: a row's ``use_case`` cell, else its ``goal``, oldest first."""
-    if not row_ids:
-        return {}
-    cursor.execute(_GOAL_CELLS_SQL, [[str(row_id) for row_id in row_ids]])
-    best: dict[Any, tuple[tuple[int, datetime], str | None]] = {}
-    for row_id, name, value, created_at in cursor.fetchall():
-        order = (0 if name == "use_case" else 1, created_at)
-        if row_id not in best or order < best[row_id][0]:
-            best[row_id] = (order, value)
-    return {row_id: value for row_id, (_, value) in best.items()}
-
-
-def _eval_specs(execution: TestExecution) -> dict[str, EvalScoringSpec]:
-    specs = {}
-    for config in SimulateEvalConfig.objects.filter(
-        run_test_id=execution.run_test_id, deleted=False
-    ).select_related("eval_template"):
-        spec = resolve_eval_scoring_spec(config)
-        warn_invalid_eval_threshold(config, spec)
-        specs[str(config.id)] = spec
-    return specs
 
 
 def _entries(text: str, keys: dict[str, str]) -> dict[str, str]:
@@ -755,13 +695,25 @@ def scan_call_values(
     execution: TestExecution,
     columns: list[dict[str, str]],
     ordering: str = "-started_at",
+    *,
+    live_evals: LiveEvals | None = None,
+    call_ids: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """``_call_values`` over ``run_calls_queryset(execution)``, in ``ordering``."""
+    """``_call_values`` over ``run_calls_queryset(execution)``, in ``ordering``.
+
+    ``call_ids`` narrows the scan to those of the run's calls.
+    """
     if ordering not in ORDERINGS:
         raise ValueError(
             f"Unknown ordering {ordering!r}; expected one of {sorted(ORDERINGS)}"
         )
-    judge = _Judge(_eval_specs(execution), [str(column["id"]) for column in columns])
+    if live_evals is None:
+        live_evals = live_eval_specs(execution.run_test_id)
+    live_evals.warn_invalid_thresholds()
+    judge = _Judge(
+        {eval_id: live.spec for eval_id, live in live_evals.items()},
+        [str(column["id"]) for column in columns],
+    )
     jobs = list(
         HostedHarnessJob.all_objects.filter(test_execution_id=execution.id).values_list(
             "id", "environment_id"
@@ -769,14 +721,18 @@ def scan_call_values(
     )
     own_jobs = {job_id for job_id, _ in jobs}
     scenario_jobs = own_jobs | {env_id for _, env_id in jobs if env_id}
+    params: list[Any] = [str(execution.id)]
+    if call_ids is not None:
+        params.append([str(uuid.UUID(str(call_id))) for call_id in call_ids])
     with connections[router.db_for_read(CallExecution)].cursor() as cursor:
         cursor.execute(
             _SCAN_SQL.format(
                 ordering=ORDERINGS[ordering],
                 calls_table=_CALLS_TABLE,
                 scenarios_table=Scenarios._meta.db_table,
+                call_filter="" if call_ids is None else _CALL_FILTER,
             ),
-            [str(execution.id)],
+            params,
         )
         rows = []
         keys: dict[str, str] = {}
@@ -856,52 +812,69 @@ def scan_call_values(
                 )
                 rows.append(row)
 
-        cursor.execute(_LINKED_SCENARIOS_SQL, [str(execution.id)])
-        scenarios = cursor.fetchall()
-        scenario_keys = list({key for _, _, key, *_ in unresolved if key is not None})
-        if scenario_keys and scenario_jobs:
-            cursor.execute(
-                _KEYED_SCENARIOS_SQL,
-                [[str(job_id) for job_id in scenario_jobs], scenario_keys],
-            )
-            scenarios += cursor.fetchall()
-        authored = _AuthoredScenarios(scenarios, own_jobs, scenario_jobs)
-
-        # Rows still without a goal, with their dataset row and scenario fallbacks.
-        pending_goals = []
-        for row, call_id, scenario_key, metadata_goals, row_id, fallbacks in unresolved:
-            scenario = authored.pick(call_id, scenario_key)
-            if scenario is not None:
-                row["result_sub_goal"] = (
-                    [] if scenario[6] is None else json.loads(scenario[6])
-                )
-                (
-                    row["result_accent"],
-                    row["result_age"],
-                    row["result_attack"],
-                    row["result_task"],
-                ) = map(_level, scenario[7:11])
-            # Twin: ``result_goal``'s Coalesce in run_results_v3_queries; change both.
-            row["result_goal"] = next(
-                (
-                    value
-                    for value in (
-                        None if scenario is None else _not_empty(scenario[5]),
-                        *metadata_goals,
-                    )
-                    if value is not None
-                ),
-                None,
-            )
-            if row["result_goal"] is None:
-                pending_goals.append((row, row_id, fallbacks))
-
-        cells = _goal_cells(
-            cursor, list({row_id for _, row_id, _ in pending_goals if row_id})
+    scenarios = (
+        authored_candidates(
+            execution.id,
+            # Every call of the run, as the SQL read model's subquery sees them.
+            call_ids=CallExecution._base_manager.filter(
+                test_execution_id=execution.id
+            ).values("id"),
+            keys={key for _, _, key, *_ in unresolved if key is not None},
         )
-    for row, row_id, fallbacks in pending_goals:
+        .using(router.db_for_read(CallExecution))
+        .annotate(
+            sub_goals_text=Cast("sub_goals", TextField()),
+            accent=KeyTextTransform("accent", "persona"),
+            age_group=KeyTextTransform("age_group", "persona"),
+            overlay=KeyTextTransform("overlay", "coverage"),
+            task=KeyTextTransform("task", "coverage"),
+        )
+        .values_list(*_SCENARIO_FIELDS, named=True)
+        if unresolved
+        else []
+    )
+    authored = AuthoredPick(scenarios, own_jobs, scenario_jobs)
+
+    # Rows still without a goal, with their dataset row and scenario fallbacks.
+    pending_goals = []
+    for row, call_id, scenario_key, metadata_goals, row_id, fallbacks in unresolved:
+        scenario = authored.pick(call_id, scenario_key)
+        if scenario is not None:
+            row["result_sub_goal"] = (
+                []
+                if scenario.sub_goals_text is None
+                else json.loads(scenario.sub_goals_text)
+            )
+            row["result_accent"] = _level(scenario.accent)
+            row["result_age"] = _level(scenario.age_group)
+            row["result_attack"] = _level(scenario.overlay)
+            row["result_task"] = _level(scenario.task)
+        # Twin: ``result_goal``'s Coalesce in run_results_v3_queries; change both.
         row["result_goal"] = next(
-            (value for value in (cells.get(row_id), *fallbacks) if value is not None),
+            (
+                value
+                for value in (
+                    None if scenario is None else _not_empty(scenario.use_case),
+                    *metadata_goals,
+                )
+                if value is not None
+            ),
+            None,
+        )
+        if row["result_goal"] is None:
+            pending_goals.append((row, row_id, fallbacks))
+
+    dimensions = _row_dimensions(
+        [],
+        {str(row_id) for _, row_id, _ in pending_goals if row_id},
+        names=("use_case", "goal"),
+    )
+    for row, row_id, fallbacks in pending_goals:
+        cells = dimensions.get(str(row_id), {})
+        # ``dataset_goal`` takes the use_case cell even when its value is NULL.
+        dataset_goal = cells["use_case"] if "use_case" in cells else cells.get("goal")
+        row["result_goal"] = next(
+            (value for value in (dataset_goal, *fallbacks) if value is not None),
             None,
         )
     return rows

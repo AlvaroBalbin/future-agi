@@ -1,13 +1,18 @@
 """The one-pass call scan returns exactly the rows the SQL read model derives."""
 
 import itertools
+import re
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
+from accounts.models.workspace import Workspace
 from model_hub.models.choices import DatasetSourceChoices, SourceChoices
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.evals_metric import EvalTemplate
@@ -16,6 +21,7 @@ from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenar
 from simulate.models.run_test import RunTest
 from simulate.services import run_results_v3_page as page_module
 from simulate.services import run_results_v3_scan as scan_module
+from simulate.services.harness_scenarios import AuthoredPick
 from simulate.services.run_results_v3_page import (
     CALL_VALUE_FIELDS,
     SQL_ORDERED_FIELDS,
@@ -61,9 +67,9 @@ def _assert_parity(execution: TestExecution, columns: list[dict[str, str]]) -> N
             scan_call_values(execution, columns, ordering),
             _orm_rows(execution, columns, ordering),
         )
-    # The model's default order breaks no ties, so compare it by call.
+    # The model's default order breaks no ties, so compare the same set by call.
     by_id = {row["id"]: row for row in _orm_rows(execution, columns, None)}
-    scanned = scan_call_values(execution, columns, "-updated_at")
+    scanned = scan_call_values(execution, columns, "-started_at")
     assert len(scanned) == len(by_id)
     for row in scanned:
         _assert_identical(row, by_id[row["id"]])
@@ -396,6 +402,44 @@ def test_metrics_and_goals_match(run, organization, workspace, user):
     _assert_parity(execution, [])
 
 
+@pytest.mark.django_db
+@pytest.mark.parametrize("use_case,goal", [(None, "Scenario goal"), ("", "")])
+def test_a_use_case_cell_without_a_value_still_shadows_the_goal_cell(
+    run, organization, workspace, user, use_case, goal
+):
+    execution, _ = run
+    dataset = Dataset.no_workspace_objects.create(
+        name="Goal cells",
+        organization=organization,
+        workspace=workspace,
+        user=user,
+        source=DatasetSourceChoices.SCENARIO.value,
+    )
+    row = Row.objects.create(dataset=dataset, order=0)
+    for name, value in (("use_case", use_case), ("goal", "Cell goal")):
+        column = Column.objects.create(
+            dataset=dataset,
+            name=name,
+            data_type="text",
+            source=SourceChoices.OTHERS.value,
+        )
+        Cell.objects.create(dataset=dataset, column=column, row=row, value=value)
+    scenario = Scenarios.objects.create(
+        name="Goal scenario",
+        source="test",
+        scenario_type=Scenarios.ScenarioTypes.SCRIPT,
+        organization=organization,
+        workspace=workspace,
+        metadata={"goal": "Scenario goal"},
+    )
+    CallExecution.objects.create(
+        test_execution=execution, scenario=scenario, status="completed", row_id=row.id
+    )
+    (scanned,) = scan_call_values(execution, [])
+    assert scanned["result_goal"] == goal
+    _assert_parity(execution, [])
+
+
 def _harness_job(organization, workspace, **fields) -> HostedHarnessJob:
     return HostedHarnessJob.no_workspace_objects.create(
         organization=organization,
@@ -484,18 +528,113 @@ def test_newest_authored_scenario_wins_within_a_rank(rank):
     job = environment if rank == "environment" else own_job
     linked = call_id if rank == "linked" else None
     now = timezone.now()
-    # (id, job, key, call, created_at, use_case, sub_goals, accent, age, attack, task)
-    older = (uuid.uuid4(), job, "repeated", linked, now - timedelta(hours=1))
-    older += ("Older", '["older"]', "Welsh", "adult", "prompt_injection", "booking")
-    newer = (uuid.uuid4(), job, "repeated", linked, now)
-    newer += ("Newer", '["newer"]', "Irish", "senior", "jailbreak", "refund")
-
-    # The older row comes first, so row order alone cannot pick the newer one.
-    authored = scan_module._AuthoredScenarios(
-        [older, newer], {own_job}, {own_job, environment}
+    older, newer = (
+        SimpleNamespace(
+            job_id=job,
+            scenario_key="repeated",
+            call_execution_id=linked,
+            created_at=created_at,
+            use_case=use_case,
+        )
+        for created_at, use_case in (
+            (now - timedelta(hours=1), "Older"),
+            (now, "Newer"),
+        )
     )
 
+    # The older row comes first, so row order alone cannot pick the newer one.
+    authored = AuthoredPick([older, newer], {own_job}, {own_job, environment})
+
     assert authored.pick(call_id, "repeated") == newer
+
+
+@pytest.mark.django_db
+def test_keys_the_sql_reads_as_text_match(run, organization, workspace):
+    execution, scenario = run
+    own = _harness_job(
+        organization,
+        workspace,
+        run_test=execution.run_test,
+        test_execution=execution,
+    )
+    # SQL drops only '' keys and reads a JSON number as its text; the scan must
+    # too, unlike authored_scenarios_for_calls, which strips its keys.
+    for key, use_case in (("  ", "Blank key"), ("5", "Numeric key")):
+        HostedHarnessScenario.no_workspace_objects.create(
+            job=own, scenario_key=key, use_case=use_case
+        )
+    for key in ("  ", 5, ""):
+        CallExecution.objects.create(
+            test_execution=execution,
+            scenario=scenario,
+            status="completed",
+            call_metadata={"harness_scenario_key": key},
+        )
+    goals = {row["result_goal"] for row in scan_call_values(execution, [])}
+    assert {"Blank key", "Numeric key"} <= goals
+    _assert_parity(execution, [])
+
+
+@pytest.mark.django_db
+def test_jobs_outside_the_request_workspace_match(run, organization, workspace, user):
+    execution, scenario = run
+    other_workspace = Workspace.no_workspace_objects.create(
+        name="Other scan workspace",
+        organization=organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    hidden = _harness_job(
+        organization,
+        other_workspace,
+        run_test=execution.run_test,
+        test_execution=execution,
+    )
+    HostedHarnessScenario.no_workspace_objects.create(
+        job=hidden, scenario_key="hidden", use_case="Hidden job"
+    )
+    linked_call = CallExecution.objects.create(
+        test_execution=execution, scenario=scenario, status="completed"
+    )
+    HostedHarnessScenario.no_workspace_objects.create(
+        job=hidden,
+        scenario_key="linked",
+        use_case="Linked across workspaces",
+        call_execution=linked_call,
+    )
+    CallExecution.objects.create(
+        test_execution=execution,
+        scenario=scenario,
+        status="completed",
+        call_metadata={"harness_scenario_key": "hidden"},
+    )
+    # The conftest scopes managers to the default workspace, as a request does.
+    goals = {row["result_goal"] for row in scan_call_values(execution, [])}
+    assert "Linked across workspaces" in goals
+    assert "Hidden job" not in goals
+    _assert_parity(execution, [])
+
+
+@pytest.mark.django_db
+def test_authored_scenarios_are_read_with_an_indexable_linked_arm(run):
+    execution, scenario = run
+    CallExecution.objects.create(
+        test_execution=execution,
+        scenario=scenario,
+        status="completed",
+        call_metadata={"harness_scenario_key": "key"},
+    )
+    with CaptureQueriesContext(connection) as queries:
+        scan_call_values(execution, [])
+    (sql,) = [
+        query["sql"]
+        for query in queries.captured_queries
+        if f'FROM "{HostedHarnessScenario._meta.db_table}"' in query["sql"]
+    ]
+    # An IN (subquery) under the OR makes Postgres scan every authored scenario.
+    assert '"call_execution_id" = ANY(ARRAY(SELECT' in sql
+    assert not re.search(r"\bIN\s*\(\s*SELECT", sql, re.IGNORECASE)
 
 
 @pytest.mark.django_db
@@ -518,7 +657,9 @@ def _page(execution, query, monkeypatch=None, scan=True):
         monkeypatch.setattr(
             page_module,
             "scan_call_values",
-            lambda execution, columns, ordering: _orm_rows(execution, columns, None),
+            lambda execution, columns, ordering, **kwargs: _orm_rows(
+                execution, columns, ordering
+            ),
         )
     return run_calls_page(
         execution,
@@ -559,6 +700,29 @@ def test_page_matches_the_sql_read_model(run, monkeypatch, query):
         expected = _page(execution, query, patched, scan=False)
     for key in ("rows", "page_ids", "summary", "execution_summary", "count"):
         _assert_identical(scanned[key], expected[key], key)
+
+
+@pytest.mark.django_db
+def test_filtered_views_sum_the_run_like_the_default_view(run):
+    execution, scenario = run
+    started = timezone.now()
+    # Summed in update order these give 0.6, in start order 0.6000000000000001.
+    for index, tokens in enumerate((0.1, 0.2, 0.3)):
+        CallExecution.objects.create(
+            test_execution=execution,
+            scenario=scenario,
+            status="completed",
+            started_at=started - timedelta(seconds=index),
+            conversation_metrics_data={"total_tokens": tokens},
+        )
+    default = _page(execution, {})["execution_summary"]
+    assert default["tokens"]["total_value"] == 0.1 + 0.2 + 0.3
+    for query in (
+        {"search": "Scan"},
+        {"filters": {"status": ["passed"]}},
+        {"group_by": "status", "group_key": "inconclusive"},
+    ):
+        _assert_identical(_page(execution, query)["execution_summary"], default)
 
 
 @pytest.mark.parametrize(
@@ -979,8 +1143,8 @@ def test_soft_deleted_calls_are_left_out_like_the_sql_read_model(
             patched.setattr(
                 page_module,
                 "scan_call_values",
-                lambda execution, columns, ordering: _orm_rows(
-                    execution, columns, None
+                lambda execution, columns, ordering, **kwargs: _orm_rows(
+                    execution, columns, ordering
                 ),
             )
             expected = run_calls_page(

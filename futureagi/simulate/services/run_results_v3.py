@@ -10,7 +10,7 @@ from collections import defaultdict
 from typing import Any
 
 from django.core.cache import cache
-from django.db import connection
+from django.db import connections, router
 
 from model_hub.models.develop_dataset import Cell
 from simulate.models import (
@@ -26,7 +26,15 @@ from simulate.services.harness_scenarios import (
 )
 from simulate.services.run_results_v3_expressions import NUMERIC_JSON_PATTERN
 from simulate.services.run_results_v3_scoring import (
+    ERRORED_EVAL_STATUSES,
+    HARNESS_ERROR,
+    HARNESS_FAILED,
+    HARNESS_INCONCLUSIVE,
+    HARNESS_PASSED,
+    NATIVE_FAILED,
+    NATIVE_PASSED,
     EvalScoringSpec,
+    LiveEvals,
     judge_stored_eval,
     resolve_eval_scoring_spec,
 )
@@ -127,7 +135,7 @@ def _eval_outcome(
     if not isinstance(eval_data, dict):
         return None
     status = str(eval_data.get("status") or "").strip().lower()
-    if status in {"error", "failed"}:
+    if status in ERRORED_EVAL_STATUSES:
         return "error"
     if status in {"pending", "skipped"}:
         return None
@@ -137,9 +145,9 @@ def _eval_outcome(
             return "passed" if value else "failed"
         if isinstance(value, str):
             normalized = value.strip().lower()
-            if normalized in {"pass", "passed", "true", "success", "successful"}:
+            if normalized in NATIVE_PASSED:
                 return "passed"
-            if normalized in {"fail", "failed", "false", "failure", "unsuccessful"}:
+            if normalized in NATIVE_FAILED:
                 return "failed"
         return None
 
@@ -164,7 +172,7 @@ def call_outcome(
         CallExecution.CallStatus.ANALYZING,
     }:
         return "in_progress"
-    if harness_outcome in {"error", "errored", "cancelled", "canceled"}:
+    if harness_outcome in HARNESS_ERROR:
         return "error"
     if call.status in {
         CallExecution.CallStatus.FAILED,
@@ -182,13 +190,13 @@ def call_outcome(
         if (verdict := _eval_outcome(data, live_eval_configs.get(str(eval_id)), specs))
         is not None
     ]
-    if harness_outcome in {"failed", "fail", "failure"} or "failed" in verdicts:
+    if harness_outcome in HARNESS_FAILED or "failed" in verdicts:
         return "failed"
     if "error" in verdicts:
         return "inconclusive"
-    if harness_outcome in {"inconclusive", "unknown", "skipped"}:
+    if harness_outcome in HARNESS_INCONCLUSIVE:
         return "inconclusive"
-    if harness_outcome in {"passed", "pass", "success", "successful"}:
+    if harness_outcome in HARNESS_PASSED:
         return "passed"
     if "passed" in verdicts:
         return "passed"
@@ -293,8 +301,21 @@ def _harness_scenarios(
     return scenarios
 
 
+ROW_DIMENSION_COLUMNS = (
+    "persona",
+    "use_case",
+    "goal",
+    "outcome",
+    "situation",
+    "branch",
+    "conversation_branch",
+)
+
+
 def _row_dimensions(
-    calls: list[CallExecution], extra_row_ids: set[str] | None = None
+    calls: list[CallExecution],
+    extra_row_ids: set[str] | None = None,
+    names: tuple[str, ...] = ROW_DIMENSION_COLUMNS,
 ) -> dict[str, dict[str, Any]]:
     row_ids: set[str] = set()
     for call in calls:
@@ -307,18 +328,7 @@ def _row_dimensions(
     dimensions: dict[str, dict[str, Any]] = defaultdict(dict)
     # Cell's default order, newest first: the oldest cell for a column wins.
     cells = (
-        Cell.all_objects.filter(
-            row_id__in=row_ids,
-            column__name__in=[
-                "persona",
-                "use_case",
-                "goal",
-                "outcome",
-                "situation",
-                "branch",
-                "conversation_branch",
-            ],
-        )
+        Cell.all_objects.filter(row_id__in=row_ids, column__name__in=names)
         .order_by("-created_at")
         .values_list("row_id", "column__name", "value")
     )
@@ -403,14 +413,14 @@ def receipt_sub_goal_names(metadata: Any) -> set[str]:
 
 # Each harness eval's first output, in call (created_at, id) then key order,
 # with the receipt of the call it came from.
-_FIRST_HARNESS_OUTPUTS_SQL = """
+_FIRST_HARNESS_OUTPUTS_SQL = f"""
 , first_outputs AS (
     SELECT DISTINCT ON (output.key)
         output.key, output.value, calls.created_at, calls.id, output.ordinality
     FROM calls
     CROSS JOIN LATERAL jsonb_each(
         CASE WHEN jsonb_typeof(calls.eval_outputs) = 'object'
-        THEN calls.eval_outputs ELSE '{}'::jsonb END
+        THEN calls.eval_outputs ELSE '{{}}'::jsonb END
     ) WITH ORDINALITY AS output(key, value, ordinality)
     WHERE jsonb_typeof(output.value) = 'object'
         AND output.value -> 'source' = '"harness"'::jsonb
@@ -421,7 +431,8 @@ SELECT
     first_outputs.value::text,
     (source_call.call_metadata -> 'hosted_harness_receipt')::text
 FROM first_outputs
-JOIN simulate_call_execution AS source_call ON source_call.id = first_outputs.id
+JOIN {CallExecution._meta.db_table} AS source_call
+    ON source_call.id = first_outputs.id
 ORDER BY first_outputs.created_at, first_outputs.id, first_outputs.ordinality
 """
 
@@ -431,13 +442,16 @@ def _harness_columns(execution: TestExecution) -> list[dict[str, str]]:
     # The catalog is execution-wide so columns never vary by page or filter.
     # Oldest call first: saving a call must not reorder the columns, so a
     # cached scan and a fresh one always agree.
+    alias = router.db_for_read(CallExecution)
     calls_sql, params = (
-        CallExecution.objects.filter(test_execution=execution)
+        CallExecution.objects.using(alias)
+        .filter(test_execution=execution)
         .order_by()
         .values("id", "created_at", "eval_outputs")
-        .query.sql_with_params()
+        .query.get_compiler(using=alias)
+        .as_sql()
     )
-    with connection.cursor() as cursor:
+    with connections[alias].cursor() as cursor:
         cursor.execute(
             f"WITH calls AS ({calls_sql}){_FIRST_HARNESS_OUTPUTS_SQL}", params
         )
@@ -510,6 +524,7 @@ def build_call_rows(
     calls: list[CallExecution] | None = None,
     columns: list[dict[str, str]] | None = None,
     live_eval_ids: set[str] | None = None,
+    live_evals: LiveEvals | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     if calls is None:
         calls = list(
@@ -521,13 +536,21 @@ def build_call_rows(
         catalog, catalog_live_ids = build_evaluation_catalog(execution)
         columns = catalog if columns is None else columns
         live_eval_ids = catalog_live_ids if live_eval_ids is None else live_eval_ids
-    live_eval_configs = {
-        str(config.id): config
-        for config in SimulateEvalConfig.objects.filter(
-            id__in=live_eval_ids, deleted=False
-        ).select_related("eval_template")
-    }
     specs: dict[str, EvalScoringSpec] = {}
+    if live_evals is None:
+        live_eval_configs = {
+            str(config.id): config
+            for config in SimulateEvalConfig.objects.filter(
+                id__in=live_eval_ids, deleted=False
+            ).select_related("eval_template")
+        }
+    else:
+        live_eval_configs = {
+            eval_id: live.config
+            for eval_id, live in live_evals.items()
+            if eval_id in live_eval_ids
+        }
+        specs = {eval_id: live_evals[eval_id].spec for eval_id in live_eval_configs}
     harness_scenarios = _harness_scenarios(calls)
     dimensions = _row_dimensions(
         calls,

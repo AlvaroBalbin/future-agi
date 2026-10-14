@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 from django.core.cache import cache
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework import status
 
@@ -2103,6 +2105,98 @@ class TestRunResultsV3Views:
 
         assert body["facets"]["status"] == [{"value": "error", "count": 1}]
         assert sum(item["count"] for item in body["facets"]["goal"]) == 1
+
+    def test_warm_hand_off_facets_scan_the_calls_without_the_sql_read_model(
+        self,
+        auth_client,
+        test_execution,
+        test_execution_2,
+        analytics_call_executions,
+        scenario,
+        monkeypatch,
+    ):
+        first, second, deleted = analytics_call_executions[:3]
+        for call in (first, second):
+            self._set_harness_outcome(call, "passed")
+        CallExecution.objects.filter(pk=deleted.pk).update(deleted=True)
+        other_run = CallExecution.objects.create(
+            test_execution=test_execution_2, scenario=scenario, status="failed"
+        )
+        hand_off = json.dumps(
+            {
+                "call_execution_id": [
+                    str(first.id).upper(),
+                    str(second.id),
+                    str(other_run.id),
+                    str(deleted.id),
+                ]
+            }
+        )
+        # Caches the hand-off's rows and the whole run's rows.
+        cold = self._calls(auth_client, test_execution, filters=hand_off)
+        assert cold["facets"]["status"] == [{"value": "passed", "count": 2}]
+        self._set_harness_outcome(second, "failed")
+
+        def no_sql(*args, **kwargs):
+            raise AssertionError("facets compiled the SQL read model")
+
+        monkeypatch.setattr("simulate.views.run_results_v3.run_calls_queryset", no_sql)
+        warm = self._calls(auth_client, test_execution, filters=hand_off)
+
+        assert [row["id"] for row in warm["results"]] == [
+            row["id"] for row in cold["results"]
+        ]
+        assert warm["count"] == 2
+        assert warm["facets"]["status"] == [
+            {"value": "failed", "count": 1},
+            {"value": "passed", "count": 1},
+        ]
+        assert warm["facets"]["goal"] == cold["facets"]["goal"]
+        assert sum(item["count"] for item in warm["facets"]["goal"]) == 2
+
+    def test_scoring_configs_load_once_and_warn_only_when_a_read_scores(
+        self,
+        auth_client,
+        test_execution,
+        analytics_call_executions,
+        run_test,
+        score_template,
+        caplog,
+    ):
+        SimulateEvalConfig.objects.create(
+            name="Bad threshold",
+            eval_template=score_template,
+            run_test=run_test,
+            config={"pass_threshold": 70},
+        )
+        logger = "simulate.services.run_results_v3_scoring"
+
+        def warnings():
+            return [
+                record
+                for record in caplog.records
+                if record.name == logger and "Invalid pass_threshold" in record.message
+            ]
+
+        with (
+            caplog.at_level("WARNING", logger=logger),
+            CaptureQueriesContext(connection) as queries,
+        ):
+            # Cold and filtered: both the SQL read model and the scan score.
+            self._calls(auth_client, test_execution, search="Scenario")
+        assert len(warnings()) == 1
+        config_reads = [
+            query["sql"]
+            for query in queries.captured_queries
+            if 'FROM "simulate_eval_config"' in query["sql"]
+        ]
+        # The catalog, two page-cache keys and the one scoring load.
+        assert len(config_reads) == 4, config_reads
+
+        caplog.clear()
+        with caplog.at_level("WARNING", logger=logger):
+            self._calls(auth_client, test_execution, search="Scenario")
+        assert warnings() == []
 
     def test_groups_score_an_eval_the_catalog_has_not_listed(
         self, auth_client, test_execution, analytics_call_executions
