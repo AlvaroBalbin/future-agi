@@ -1484,15 +1484,18 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	}()
 	effectiveFailover := h.effectiveFailover(orgCfg)
 
+	// callCtx bounds an attempt only until its first chunk. The stream itself
+	// lives on the request context: failover cancels callCtx as soon as the
+	// attempt returns, which would otherwise end the stream after one chunk.
 	openStream := func(callCtx context.Context, callProvider providers.Provider) error {
-		attemptCtx, attemptCancel := context.WithCancel(callCtx)
+		attemptCtx, attemptCancel := context.WithCancel(ctx)
 		candidateChunks, candidateErrCh := callProvider.StreamChatCompletion(attemptCtx, rc.Request)
 		if candidateChunks == nil {
 			attemptCancel()
 			return models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")
 		}
 
-		chunk, err := waitForFirstStreamChunk(attemptCtx, candidateChunks, candidateErrCh)
+		chunk, err := waitForFirstStreamChunk(callCtx, candidateChunks, candidateErrCh)
 		if err != nil {
 			cancelAndDrainStream(attemptCancel, candidateChunks)
 			return err
