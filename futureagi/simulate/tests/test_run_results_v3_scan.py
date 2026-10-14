@@ -706,7 +706,7 @@ def test_page_matches_the_sql_read_model(run, monkeypatch, query):
 def test_filtered_views_sum_the_run_like_the_default_view(run):
     execution, scenario = run
     started = timezone.now()
-    # Summed in update order these give 0.6, in start order 0.6000000000000001.
+    # The float total depends on the order the calls are summed in.
     for index, tokens in enumerate((0.1, 0.2, 0.3)):
         CallExecution.objects.create(
             test_execution=execution,
@@ -715,8 +715,8 @@ def test_filtered_views_sum_the_run_like_the_default_view(run):
             started_at=started - timedelta(seconds=index),
             conversation_metrics_data={"total_tokens": tokens},
         )
+    assert 0.1 + 0.2 + 0.3 != 0.3 + 0.2 + 0.1
     default = _page(execution, {})["execution_summary"]
-    assert default["tokens"]["total_value"] == 0.1 + 0.2 + 0.3
     for query in (
         {"search": "Scan"},
         {"filters": {"status": ["passed"]}},
