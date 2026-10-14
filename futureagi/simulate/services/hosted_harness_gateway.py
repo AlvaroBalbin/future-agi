@@ -305,6 +305,8 @@ def _platform_simulator_material() -> dict[str, str]:
     for name in (
         "CARTESIA_API_KEY",
         "DEEPGRAM_API_KEY",
+        # Models the simulated caller tries in turn when the chosen one fails.
+        "SIMULATOR_LLM_FALLBACK_MODELS",
         "SIMULATOR_STT_MODEL",
         "SIMULATOR_STT_PROVIDER",
         "SIMULATOR_TTS_MODEL",
