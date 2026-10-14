@@ -12074,6 +12074,7 @@ class FeedbackViewSet(viewsets.ModelViewSet):
             # Add feedback information
             row_dict["feedback_comment"] = feedback.explanation
             row_dict["feedback_value"] = feedback.value
+            row_dict["feedback_id"] = str(feedback.id)
             futureagi_eval = (
                 True
                 if user_eval_metric.template.config.get("eval_type_id")
