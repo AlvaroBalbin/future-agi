@@ -31647,7 +31647,7 @@ export const simulateAgentDefinitionsCreateCreateBodyObservabilityEnabledDefault
   false;
 export const simulateAgentDefinitionsCreateCreateBodyLivekitUrlMax = 500;
 
-export const simulateAgentDefinitionsCreateCreateBodyLivekitMaxConcurrencyMax = 25;
+export const simulateAgentDefinitionsCreateCreateBodyLivekitMaxConcurrencyMax = 20;
 
 export const SimulateAgentDefinitionsCreateCreateBody = zod.object({
   agent_name: zod
@@ -31866,7 +31866,7 @@ export const simulateAgentDefinitionsEditUpdateBodyAgentNameMax = 255;
 
 export const simulateAgentDefinitionsEditUpdateBodyLivekitUrlMax = 500;
 
-export const simulateAgentDefinitionsEditUpdateBodyLivekitMaxConcurrencyMax = 25;
+export const simulateAgentDefinitionsEditUpdateBodyLivekitMaxConcurrencyMax = 20;
 
 export const SimulateAgentDefinitionsEditUpdateBody = zod.object({
   agent_name: zod
@@ -32122,7 +32122,7 @@ export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitApiSecretMax
 
 export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitAgentNameMax = 255;
 
-export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitMaxConcurrencyMax = 25;
+export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitMaxConcurrencyMax = 20;
 
 export const simulateAgentDefinitionsVersionsCreateCreateBodyCommitMessageDefault = ``;
 export const simulateAgentDefinitionsVersionsCreateCreateBodyObservabilityEnabledDefault =
@@ -48632,7 +48632,10 @@ export const TracerAlertsListResponse = zod.object({
         enabled: zod.boolean(),
         project_id: zod.string().uuid().optional(),
         trigger_type: zod.string().min(1).optional(),
-        trigger_value: zod.object({}).passthrough().optional(),
+        severity_threshold: zod
+          .enum(["low", "medium", "high", "critical"])
+          .optional(),
+        occurrence_threshold: zod.number().optional(),
         filters: zod.object({}).passthrough().optional(),
         slack_connection_id: zod.string().uuid().optional(),
         slack_channel_id: zod.string().min(1).optional(),
@@ -48670,6 +48673,8 @@ export const TracerAlertsListResponse = zod.object({
   }),
 });
 
+export const tracerAlertsCreateBodyOccurrenceThresholdMax = 1000000;
+
 export const tracerAlertsCreateBodyCooldownSecondsMin = 0;
 
 export const TracerAlertsCreateBody = zod.object({
@@ -48678,7 +48683,14 @@ export const TracerAlertsCreateBody = zod.object({
   enabled: zod.boolean().optional(),
   project_id: zod.string().uuid().optional(),
   trigger_type: zod.string().min(1).optional(),
-  trigger_value: zod.object({}).passthrough().optional(),
+  severity_threshold: zod
+    .enum(["low", "medium", "high", "critical"])
+    .optional(),
+  occurrence_threshold: zod
+    .number()
+    .min(1)
+    .max(tracerAlertsCreateBodyOccurrenceThresholdMax)
+    .optional(),
   filters: zod.object({}).passthrough().optional(),
   slack_connection_id: zod.string().uuid().optional(),
   slack_channel_id: zod.string().min(1).optional(),
@@ -48755,7 +48767,10 @@ export const TracerAlertsReadResponse = zod.object({
     enabled: zod.boolean(),
     project_id: zod.string().uuid().optional(),
     trigger_type: zod.string().min(1).optional(),
-    trigger_value: zod.object({}).passthrough().optional(),
+    severity_threshold: zod
+      .enum(["low", "medium", "high", "critical"])
+      .optional(),
+    occurrence_threshold: zod.number().optional(),
     filters: zod.object({}).passthrough().optional(),
     slack_connection_id: zod.string().uuid().optional(),
     slack_channel_id: zod.string().min(1).optional(),
@@ -48796,6 +48811,8 @@ export const TracerAlertsPartialUpdateParams = zod.object({
   alert_id: zod.string(),
 });
 
+export const tracerAlertsPartialUpdateBodyOccurrenceThresholdMax = 1000000;
+
 export const tracerAlertsPartialUpdateBodyCooldownSecondsMin = 0;
 
 export const TracerAlertsPartialUpdateBody = zod.object({
@@ -48804,7 +48821,14 @@ export const TracerAlertsPartialUpdateBody = zod.object({
   enabled: zod.boolean().optional(),
   project_id: zod.string().uuid().optional(),
   trigger_type: zod.string().min(1).optional(),
-  trigger_value: zod.object({}).passthrough().optional(),
+  severity_threshold: zod
+    .enum(["low", "medium", "high", "critical"])
+    .optional(),
+  occurrence_threshold: zod
+    .number()
+    .min(1)
+    .max(tracerAlertsPartialUpdateBodyOccurrenceThresholdMax)
+    .optional(),
   filters: zod.object({}).passthrough().optional(),
   slack_connection_id: zod.string().uuid().optional(),
   slack_channel_id: zod.string().min(1).optional(),
@@ -48837,7 +48861,10 @@ export const TracerAlertsPartialUpdateResponse = zod.object({
     enabled: zod.boolean(),
     project_id: zod.string().uuid().optional(),
     trigger_type: zod.string().min(1).optional(),
-    trigger_value: zod.object({}).passthrough().optional(),
+    severity_threshold: zod
+      .enum(["low", "medium", "high", "critical"])
+      .optional(),
+    occurrence_threshold: zod.number().optional(),
     filters: zod.object({}).passthrough().optional(),
     slack_connection_id: zod.string().uuid().optional(),
     slack_channel_id: zod.string().min(1).optional(),
