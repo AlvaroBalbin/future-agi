@@ -37,7 +37,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
 import BoundedCursorPaginationControl from "src/components/BoundedCursorPaginationControl";
-import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import axios, { endpoints } from "src/utils/axios";
 import { SpanTypes } from "src/utils/constant";
 import {
@@ -2871,7 +2871,7 @@ function PropertyPicker({
                     "&:hover": { bgcolor: "action.hover" },
                   }}
                 >
-                  <TruncatedLabel
+                  <OverflowText
                     text={prop.name}
                     sx={{ fontSize: 13, flex: 1, maxWidth: 250 }}
                   />
@@ -3015,40 +3015,24 @@ const pickerValueKey = (value, storageType) =>
   getPickerValueIdentity(value, storageType);
 
 // A one-line label (a field name, a value) that names itself in full on hover,
-// but only when the line actually cuts it off. The check runs as the pointer
-// arrives, since the width depends on the panel; a label that fits gets no
-// tooltip, and a long list carries no per-row observers.
-function TruncatedLabel({ text, sx }) {
-  const ref = useRef(null);
-  const [cutOff, setCutOff] = useState(false);
-  const measure = () => {
-    const el = ref.current;
-    setCutOff(!!el && el.scrollWidth > el.clientWidth);
-  };
+// only when the line cuts it off (the shared OverflowTooltip measures on hover).
+// Long ids have no spaces, so the tooltip may break them anywhere.
+function OverflowText({ text, sx }) {
   return (
-    <CustomTooltip
-      show
-      arrow
-      size="small"
-      placement="top-start"
-      enterDelay={300}
+    <OverflowTooltip
       title={
-        cutOff ? (
-          <Box sx={{ wordBreak: "break-all", whiteSpace: "pre-wrap" }}>
-            {text}
-          </Box>
-        ) : (
-          ""
-        )
+        <Box component="span" sx={{ wordBreak: "break-all" }}>
+          {text}
+        </Box>
       }
     >
-      <Typography ref={ref} noWrap onMouseEnter={measure} sx={sx}>
+      <Typography noWrap sx={sx}>
         {text}
       </Typography>
-    </CustomTooltip>
+    </OverflowTooltip>
   );
 }
-TruncatedLabel.propTypes = {
+OverflowText.propTypes = {
   text: PropTypes.string,
   sx: PropTypes.object,
 };
@@ -3383,7 +3367,7 @@ function ValuePicker({
             const displayLabel =
               (typeof match === "string" ? match : match?.label) ?? String(v);
             return (
-              <TruncatedLabel
+              <OverflowText
                 key={pickerValueKey(v, selectedValueTypes[0])}
                 text={displayLabel}
                 sx={{
@@ -3417,16 +3401,10 @@ function ValuePicker({
               ? `${chipLabel} (${secondaryLabel})`
               : chipLabel;
             return (
-              // Chips are capped narrow, so a long value is nearly always
-              // cut; its full name is always one hover away.
-              <CustomTooltip
+              <OverflowTooltip
                 key={pickerValueKey(v, selectedType)}
-                show
-                arrow
-                size="small"
-                enterDelay={300}
                 title={
-                  <Box sx={{ wordBreak: "break-all", whiteSpace: "pre-wrap" }}>
+                  <Box component="span" sx={{ wordBreak: "break-all" }}>
                     {chipTitle}
                   </Box>
                 }
@@ -3453,7 +3431,7 @@ function ValuePicker({
                     "& .MuiChip-label": { px: 0.5 },
                   }}
                 />
-              </CustomTooltip>
+              </OverflowTooltip>
             );
           })
         )}
@@ -3654,7 +3632,7 @@ function ValuePicker({
                   }}
                 />
                 <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <TruncatedLabel
+                  <OverflowText
                     text={label}
                     sx={{
                       fontSize: 12,
@@ -3663,7 +3641,7 @@ function ValuePicker({
                     }}
                   />
                   {secondaryLabel && (
-                    <TruncatedLabel
+                    <OverflowText
                       text={secondaryLabel}
                       sx={{ fontSize: 10, color: "text.secondary", mt: 0.1 }}
                     />
@@ -4288,42 +4266,31 @@ function FilterRow({
         mb: rowHasInvalidNumeric || rowHasInvalidMap ? 1.5 : 0,
       }}
     >
-      <CustomTooltip
-        show={!!(selectedProp?.name || filter.fieldName || filter.field)}
-        arrow
+      <Button
+        ref={(el) => el}
         size="small"
-        type="black"
-        title={selectedProp?.name || filter.fieldName || filter.field || ""}
+        variant="outlined"
+        onClick={(e) => setPickerAnchor(e.currentTarget)}
+        endIcon={<Iconify icon="mdi:chevron-down" width={14} />}
+        sx={{
+          textTransform: "none",
+          fontSize: 12,
+          height: 28,
+          flex: "1 1 150px",
+          minWidth: 0,
+          maxWidth: { xs: "100%", sm: 180 },
+          borderColor: "divider",
+          color: filter.field ? "text.primary" : "text.disabled",
+          justifyContent: "space-between",
+        }}
       >
-        <Button
-          ref={(el) => el}
-          size="small"
-          variant="outlined"
-          onClick={(e) => setPickerAnchor(e.currentTarget)}
-          endIcon={<Iconify icon="mdi:chevron-down" width={14} />}
-          sx={{
-            textTransform: "none",
-            fontSize: 12,
-            height: 28,
-            flex: "1 1 150px",
-            minWidth: 0,
-            maxWidth: { xs: "100%", sm: 180 },
-            borderColor: "divider",
-            color: filter.field ? "text.primary" : "text.disabled",
-            justifyContent: "space-between",
-          }}
-        >
-          <TruncatedLabel
-            text={
-              selectedProp?.name ||
-              filter.fieldName ||
-              filter.field ||
-              "Property"
-            }
-            sx={{ fontSize: 12, maxWidth: "100%" }}
-          />
-        </Button>
-      </CustomTooltip>
+        <OverflowText
+          text={
+            selectedProp?.name || filter.fieldName || filter.field || "Property"
+          }
+          sx={{ fontSize: 12, maxWidth: "100%" }}
+        />
+      </Button>
       <PropertyPicker
         anchorEl={pickerAnchor}
         open={Boolean(pickerAnchor)}

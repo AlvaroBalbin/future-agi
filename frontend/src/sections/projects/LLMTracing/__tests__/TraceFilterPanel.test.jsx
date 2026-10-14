@@ -4001,7 +4001,30 @@ describe("voice-call property search aliases", () => {
     document.body.removeChild(anchorEl);
   });
 
-  it("names each selected value chip in full on hover", async () => {
+  // jsdom has no layout: give an element the box of a clipped line, then hover.
+  const clip = (el) => {
+    Object.defineProperty(el, "scrollWidth", { value: 420 });
+    Object.defineProperty(el, "clientWidth", { value: 220 });
+    return el;
+  };
+  const hover = (el) => {
+    fireEvent.mouseOver(el);
+    fireEvent.mouseEnter(el);
+  };
+  const tooltipCount = () =>
+    document.querySelectorAll(".MuiTooltip-tooltip").length;
+  const rawFilter = (overrides) => ({
+    field: "agent_name",
+    fieldName: "agent_name",
+    fieldCategory: "attribute",
+    fieldType: "string",
+    apiColType: "SPAN_ATTRIBUTE",
+    operator: "in",
+    value: [],
+    ...overrides,
+  });
+
+  it("names a chip in full on hover only when the chip cuts it off", async () => {
     const long = "dfd8e932-aadf-4f7b-8f4d-5f97c7dabfd8-deep-research-agent";
     dashboardFilterValuesMock.mockReturnValue({
       ...defaultDashboardFilterValues(),
@@ -4012,23 +4035,64 @@ describe("voice-call property search aliases", () => {
     });
     const { anchorEl } = renderPanel({
       properties,
+      currentFilters: [rawFilter({ value: [long, "ended"] })],
+      projectId: "project-1",
+    });
+    const chipOf = (text) => screen.getByText(text).closest(".MuiChip-root");
+    expect(chipOf(long)).not.toHaveAttribute("title");
+
+    hover(chipOf("ended"));
+    await new Promise((r) => setTimeout(r, 400));
+    expect(tooltipCount()).toBe(0);
+    fireEvent.mouseLeave(chipOf("ended"));
+
+    clip(chipOf(long).querySelector(".MuiChip-label"));
+    hover(chipOf(long));
+    await waitFor(() => expect(hoverTooltip()).toHaveTextContent(long));
+
+    document.body.removeChild(anchorEl);
+  });
+
+  it("names a cut-off chosen field once on its button, and not at all when it fits", async () => {
+    const longField =
+      "customer.organization.display_name_for_billing_and_compliance_reporting";
+    const { anchorEl } = renderPanel({
+      properties,
       currentFilters: [
-        {
-          field: "agent_name",
-          fieldName: "agent_name",
-          fieldCategory: "attribute",
-          fieldType: "string",
-          apiColType: "SPAN_ATTRIBUTE",
-          operator: "in",
-          value: [long, "ended"],
-        },
+        rawFilter({ field: longField, fieldName: longField }),
+        rawFilter({ value: ["ended"] }),
       ],
       projectId: "project-1",
     });
-    const chip = screen.getByText(long).closest(".MuiChip-root");
-    expect(chip).not.toHaveAttribute("title");
-    fireEvent.mouseOver(chip);
+
+    hover(screen.getByText("agent_name"));
+    await new Promise((r) => setTimeout(r, 400));
+    expect(tooltipCount()).toBe(0);
+    fireEvent.mouseLeave(screen.getByText("agent_name"));
+
+    hover(clip(screen.getByText(longField)));
+    await waitFor(() => expect(hoverTooltip()).toHaveTextContent(longField));
+    expect(tooltipCount()).toBe(1);
+
+    document.body.removeChild(anchorEl);
+  });
+
+  it("names a cut-off single chosen value in full on hover", async () => {
+    const long = "dfd8e932-aadf-4f7b-8f4d-5f97c7dabfd8-deep-research-agent";
+    dashboardFilterValuesMock.mockReturnValue({
+      ...defaultDashboardFilterValues(),
+      data: [{ value: long, label: long }],
+    });
+    const { anchorEl } = renderPanel({
+      properties,
+      currentFilters: [rawFilter({ operator: "equals", value: long })],
+      projectId: "project-1",
+    });
+    const label = screen.getByText(long);
+    expect(label).not.toHaveAttribute("title");
+    hover(clip(label));
     await waitFor(() => expect(hoverTooltip()).toHaveTextContent(long));
+    expect(tooltipCount()).toBe(1);
 
     document.body.removeChild(anchorEl);
   });
