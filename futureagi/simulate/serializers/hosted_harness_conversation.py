@@ -270,3 +270,17 @@ class HarnessConversationRunStartSerializer(serializers.Serializer):
         max_length=100,
     )
     trials = serializers.IntegerField(min_value=1, max_value=20, default=1)
+
+
+class HarnessConversationOverviewQuerySerializer(serializers.Serializer):
+    pass
+
+
+class HarnessConversationOverviewSerializer(serializers.Serializer):
+    environment = serializers.DictField()
+    scenario_count = serializers.IntegerField()
+    use_cases = serializers.ListField(child=serializers.DictField())
+    coverage = serializers.DictField()
+    recent_runs = serializers.ListField(child=serializers.DictField())
+    build_changes = serializers.ListField(child=serializers.DictField())
+    earlier_messages = serializers.ListField(child=serializers.DictField())

@@ -15,6 +15,8 @@ from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationCommandQuerySerializer,
     HarnessConversationEventAckSerializer,
     HarnessConversationEventBatchSerializer,
+    HarnessConversationOverviewQuerySerializer,
+    HarnessConversationOverviewSerializer,
     HarnessConversationPublishSerializer,
     HarnessConversationRerunSerializer,
     HarnessConversationRunsQuerySerializer,
@@ -271,7 +273,11 @@ class HostedHarnessConversationViewSet(viewsets.ViewSet):
             )
         )
 
+    @validated_request(
+        request_serializer=HarnessConversationOverviewQuerySerializer,
+        responses={200: HarnessConversationOverviewSerializer},
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"])
-    @swagger_auto_schema(responses={200: openapi.Schema(type=openapi.TYPE_OBJECT)})
     def overview(self, request, pk=None):
         return Response(conversation_overview(self._conversation))

@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1058,
+  endpointCount: 1063,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -884,8 +884,13 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/harness/conversations/{id}/adjust/": ["post"],
       "/simulate/api/harness/conversations/{id}/commands/": ["get"],
       "/simulate/api/harness/conversations/{id}/events/": ["post"],
+      "/simulate/api/harness/conversations/{id}/overview/": ["post"],
+      "/simulate/api/harness/conversations/{id}/publish/": ["post"],
       "/simulate/api/harness/conversations/{id}/rerun/": ["post"],
       "/simulate/api/harness/conversations/{id}/run-status/": ["get"],
+      "/simulate/api/harness/conversations/{id}/runs/": ["post"],
+      "/simulate/api/harness/conversations/{id}/runs/start/": ["post"],
+      "/simulate/api/harness/conversations/{id}/scenarios/": ["post"],
       "/simulate/api/harness/conversations/{id}/session-store/": ["get"],
       "/simulate/api/harness/conversations/{id}/session-store/append/": [
         "post",
@@ -2162,8 +2167,13 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/harness/conversations/{id}/adjust/": ["post"],
   "/simulate/api/harness/conversations/{id}/commands/": ["get"],
   "/simulate/api/harness/conversations/{id}/events/": ["post"],
+  "/simulate/api/harness/conversations/{id}/overview/": ["post"],
+  "/simulate/api/harness/conversations/{id}/publish/": ["post"],
   "/simulate/api/harness/conversations/{id}/rerun/": ["post"],
   "/simulate/api/harness/conversations/{id}/run-status/": ["get"],
+  "/simulate/api/harness/conversations/{id}/runs/": ["post"],
+  "/simulate/api/harness/conversations/{id}/runs/start/": ["post"],
+  "/simulate/api/harness/conversations/{id}/scenarios/": ["post"],
   "/simulate/api/harness/conversations/{id}/session-store/": ["get"],
   "/simulate/api/harness/conversations/{id}/session-store/append/": ["post"],
   "/simulate/api/harness/conversations/{id}/workspace/": ["put"],
