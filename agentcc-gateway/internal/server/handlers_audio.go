@@ -13,6 +13,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/streaming"
 )
 
 // CreateSpeech handles POST /v1/audio/speech.
@@ -565,68 +566,85 @@ func (h *Handlers) StreamSpeech(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get the audio stream from the provider.
-	audioStream, contentType, err := sp.CreateSpeech(ctx, rc.SpeechRequest)
-	if err != nil {
-		models.WriteErrorFromError(w, err)
-		return
-	}
-	defer audioStream.Close()
-
-	// Set up SSE streaming.
-	flusher, ok := w.(http.Flusher)
-	if !ok {
+	sse := streaming.NewSSEWriter(w)
+	if sse == nil {
 		models.WriteError(w, models.ErrInternal("streaming not supported by server"))
 		return
 	}
 
+	// Post-plugins run once the stream has ended, when the audio size is known.
+	rc.IsStream = true
+	var audioStream io.ReadCloser
+	var contentType string
+	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
+		var callErr error
+		audioStream, contentType, callErr = sp.CreateSpeech(ctx, rc.SpeechRequest)
+		return callErr
+	}); err != nil {
+		models.WriteErrorFromError(w, err)
+		return
+	}
+	if audioStream == nil {
+		// A pre-plugin short-circuited without an error; speech has nothing cached to serve.
+		models.WriteError(w, models.ErrInternal("no audio stream from provider"))
+		return
+	}
+	defer audioStream.Close()
+
+	rc.ResolvedModel = rc.SpeechRequest.Model
+	rc.SetMetadata("input_characters", strconv.Itoa(len(rc.SpeechRequest.Input)))
+	rc.SetMetadata("response_content_type", contentType)
 	h.setAgentccHeaders(w, rc)
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
+	sse.WriteHeaders()
 
-	// Read audio in chunks and send as base64-encoded SSE events.
-	const chunkSize = 16 * 1024 // 16KB chunks
-	buf := make([]byte, chunkSize)
+	sent := 0
+	finalize := func(detach bool) {
+		rc.SetMetadata("response_size_bytes", strconv.Itoa(sent))
+		pluginCtx := ctx
+		if detach {
+			pluginCtx = context.Background()
+		}
+		h.engine.RunPostPlugins(pluginCtx, rc)
+	}
+
+	buf := make([]byte, 16*1024)
 	index := 0
-
 	for {
 		n, readErr := audioStream.Read(buf)
 		if n > 0 {
-			chunk := models.AudioStreamChunk{
+			data, _ := json.Marshal(models.AudioStreamChunk{
 				Index:       index,
 				ContentType: contentType,
 				Data:        base64.StdEncoding.EncodeToString(buf[:n]),
-			}
-			data, marshalErr := json.Marshal(chunk)
-			if marshalErr != nil {
-				slog.Warn("error marshaling audio chunk", "error", marshalErr)
+			})
+			if writeErr := sse.WriteRaw(data); writeErr != nil {
+				// Client gone, audio still synthesized — detach from its context.
+				finalize(true)
 				return
 			}
-			if _, writeErr := fmt.Fprintf(w, "data: %s\n\n", data); writeErr != nil {
-				slog.Warn("error writing audio stream chunk", "error", writeErr)
-				return
-			}
-			flusher.Flush()
+			sent += n
 			index++
 		}
-		if readErr != nil {
-			if readErr != io.EOF {
-				slog.Warn("error reading audio stream", "error", readErr)
-			}
+		if readErr == io.EOF {
 			break
+		}
+		if readErr != nil {
+			if ctx.Err() != nil {
+				finalize(true)
+				return
+			}
+			// Headers are already sent, so a cut-off clip is reported in-band
+			// instead of being closed out as complete.
+			slog.Warn("error reading audio stream", "request_id", rc.RequestID, "error", readErr)
+			rc.AddError(readErr)
+			sse.WriteError(models.ErrUpstreamProvider(0, "reading speech stream: "+readErr.Error()))
+			finalize(false)
+			return
 		}
 	}
 
-	// Send done event.
-	doneChunk := models.AudioStreamChunk{
-		Index: index,
-		Done:  true,
-	}
-	doneData, _ := json.Marshal(doneChunk)
-	fmt.Fprintf(w, "data: %s\n\n", doneData)
-	fmt.Fprint(w, "data: [DONE]\n\n")
-	flusher.Flush()
+	done, _ := json.Marshal(models.AudioStreamChunk{Index: index, Done: true})
+	sse.WriteRaw(done)
+	sse.WriteDone()
+	finalize(false)
 }
