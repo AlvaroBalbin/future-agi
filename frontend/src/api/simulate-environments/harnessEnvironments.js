@@ -69,6 +69,12 @@ export const renameHarnessEnvironment = async (id, name) =>
 export const deleteAppliedEvaluation = async (id, evalConfigId) =>
   (await axios.delete(environmentEvaluationPath(id, evalConfigId))).data;
 
+// Edit an applied evaluation. Same path as the remove; the body carries only
+// the fields being changed and never grades. The 200 body is the updated eval
+// in the run test's `simulate_eval_configs_detail` item shape.
+export const updateAppliedEvaluation = async (id, evalConfigId, body) =>
+  (await axios.patch(environmentEvaluationPath(id, evalConfigId), body)).data;
+
 // Turn the tool-call judge on or off. PUT with the whole state of the switch;
 // the 200 body is the full detail (`settings.enable_tool_evaluation`), so the
 // caller seeds the detail cache from it. 409 turning it on for a voice
@@ -99,3 +105,20 @@ const runEvaluationsPath = (id, executionId) =>
 // this response to seed the applied list from.
 export const addRunEvaluation = async (id, executionId, name) =>
   (await axios.post(runEvaluationsPath(id, executionId), { name })).data;
+
+const runEvaluationsAgainPath = (id, executionId) =>
+  apiPath(
+    "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/run/",
+    { id, execution_id: executionId },
+  );
+
+// Grade a finished run's calls again with evals the environment already has,
+// without rerunning the calls. The 202 body is `{ call_execution_count }`.
+// A refusal carries its sentence under `detail`; a 503 means the grading job
+// could not be queued and every score is as it was.
+export const runEvaluationsAgain = async (id, executionId, evalConfigIds) =>
+  (
+    await axios.post(runEvaluationsAgainPath(id, executionId), {
+      eval_config_ids: evalConfigIds,
+    })
+  ).data;

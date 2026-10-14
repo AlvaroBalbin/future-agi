@@ -17431,6 +17431,7 @@ export interface HarnessEnvironmentSelectedEvalApi {
   inputs: HarnessEnvironmentEvalInputApi[];
   id: string;
   runnable: boolean;
+  editable: boolean;
 }
 
 export type HarnessEnvironmentResultApiEvaluationsItem = {
@@ -17570,6 +17571,138 @@ export interface HarnessEnvironmentToolCallEvaluationApi {
   enable_tool_evaluation: boolean;
 }
 
+/**
+ * Updated evaluation configuration parameters.
+ */
+export type HarnessEnvironmentEvalEditApiConfig = { [key: string]: unknown };
+
+/**
+ * Updated field mapping between test data and evaluation inputs.
+ */
+export type HarnessEnvironmentEvalEditApiMapping = { [key: string]: unknown };
+
+export type HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem =
+  (typeof HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem];
+
+export const HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem =
+  {
+    string: "string",
+    number: "number",
+    boolean: "boolean",
+  } as const;
+
+export type HarnessEnvironmentEvalEditApiFiltersItemFilterConfig = {
+  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
+  filter_type: string;
+  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+  filter_op: string;
+  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+  filter_value?: unknown;
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  col_type?: string;
+  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
+  attribute_value_types?: HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem[];
+};
+
+export type HarnessEnvironmentEvalEditApiFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional stable namespaced Property Registry identity. */
+  property_id?: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  filter_config: HarnessEnvironmentEvalEditApiFiltersItemFilterConfig;
+};
+
+export interface HarnessEnvironmentEvalEditApi {
+  /** Updated evaluation configuration parameters. */
+  config?: HarnessEnvironmentEvalEditApiConfig;
+  /** Updated field mapping between test data and evaluation inputs. */
+  mapping?: HarnessEnvironmentEvalEditApiMapping;
+  /**
+   * Model to use for evaluations.
+   * @minLength 1
+   */
+  model?: string;
+  /** Enable granular error localization in evaluation results. */
+  error_localizer?: boolean;
+  /** UUID of a knowledge base to use for grounding. Pass null to clear. Switching template_id without providing an explicit kb_id will clear the KB association. */
+  kb_id?: string;
+  /** Updated canonical filter list to restrict which test results are evaluated. */
+  filters?: HarnessEnvironmentEvalEditApiFiltersItem[];
+  /**
+   * Updated name for the evaluation configuration.
+   * @minLength 1
+   */
+  name?: string;
+}
+
+export type SimulateEvalConfigResponseApiConfig = { [key: string]: unknown };
+
+export type SimulateEvalConfigResponseApiMapping = { [key: string]: unknown };
+
+export type SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem =
+  (typeof SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem];
+
+export const SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem =
+  {
+    string: "string",
+    number: "number",
+    boolean: "boolean",
+  } as const;
+
+export type SimulateEvalConfigResponseApiFiltersItemFilterConfig = {
+  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
+  filter_type: string;
+  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+  filter_op: string;
+  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+  filter_value?: unknown;
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  col_type?: string;
+  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
+  attribute_value_types?: SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem[];
+};
+
+export type SimulateEvalConfigResponseApiFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional stable namespaced Property Registry identity. */
+  property_id?: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  filter_config: SimulateEvalConfigResponseApiFiltersItemFilterConfig;
+};
+
+export interface SimulateEvalConfigResponseApi {
+  readonly id?: string;
+  /** @minLength 1 */
+  readonly name?: string;
+  readonly config?: SimulateEvalConfigResponseApiConfig;
+  readonly mapping?: SimulateEvalConfigResponseApiMapping;
+  readonly filters?: readonly SimulateEvalConfigResponseApiFiltersItem[];
+  readonly error_localizer?: boolean;
+  /** @minLength 1 */
+  readonly model?: string;
+  /** @minLength 1 */
+  readonly status?: string;
+  /** @minLength 1 */
+  readonly eval_group?: string;
+  readonly template_id?: string;
+  /** @minLength 1 */
+  readonly eval_type?: string;
+  readonly regradable?: boolean;
+  readonly editable?: boolean;
+}
+
 export interface HarnessRunCreateApi {
   /** @maxItems 1000 */
   scenario_ids: string[];
@@ -17608,6 +17741,18 @@ export interface HarnessEnvironmentRunEvaluationQueuedApi {
   skipped_in_flight: number;
   skipped_pending: number;
   completed_calls: number;
+}
+
+export interface HarnessEnvironmentRunEvaluationsApi {
+  /** @minItems 1 */
+  eval_config_ids: string[];
+  /** Saved on the environment before grading starts; left as it is when absent. */
+  enable_tool_evaluation?: boolean;
+}
+
+export interface HarnessEnvironmentRunEvaluationsQueuedApi {
+  /** How many of the run's calls were queued for grading. */
+  call_execution_count: number;
 }
 
 export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
@@ -19724,64 +19869,6 @@ export type RunTestResponseApiScenariosDetailItem = { [key: string]: unknown };
 
 export type RunTestResponseApiSimulatorAgentDetail = { [key: string]: unknown };
 
-export type SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem =
-  (typeof SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem];
-
-export const SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem =
-  {
-    string: "string",
-    number: "number",
-    boolean: "boolean",
-  } as const;
-
-export type SimulateEvalConfigResponseApiConfig = { [key: string]: unknown };
-
-export type SimulateEvalConfigResponseApiMapping = { [key: string]: unknown };
-
-export type SimulateEvalConfigResponseApiFiltersItemFilterConfig = {
-  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
-  filter_type: string;
-  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
-  filter_op: string;
-  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
-  filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
-  col_type?: string;
-  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
-  attribute_value_types?: SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem[];
-};
-
-export type SimulateEvalConfigResponseApiFiltersItem = {
-  /** Column or attribute id to filter on. */
-  column_id: string;
-  /** Optional stable namespaced Property Registry identity. */
-  property_id?: string;
-  /** Optional UI label for chips and saved views. */
-  display_name?: string;
-  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
-  source?: string;
-  /** Optional metric output type metadata used by eval and annotation filters. */
-  output_type?: string;
-  filter_config: SimulateEvalConfigResponseApiFiltersItemFilterConfig;
-};
-
-export interface SimulateEvalConfigResponseApi {
-  readonly id?: string;
-  /** @minLength 1 */
-  readonly name?: string;
-  readonly config?: SimulateEvalConfigResponseApiConfig;
-  readonly mapping?: SimulateEvalConfigResponseApiMapping;
-  readonly filters?: readonly SimulateEvalConfigResponseApiFiltersItem[];
-  readonly error_localizer?: boolean;
-  /** @minLength 1 */
-  readonly model?: string;
-  /** @minLength 1 */
-  readonly status?: string;
-  /** @minLength 1 */
-  readonly eval_group?: string;
-  readonly template_id?: string;
-}
-
 export interface RunTestResponseApi {
   readonly id?: string;
   /**
@@ -20848,6 +20935,10 @@ export interface EvalConfigResponseApi {
   status?: EvalConfigResponseApiStatus;
   readonly eval_group?: string;
   readonly template_id?: string;
+  /** @minLength 1 */
+  readonly eval_type?: string;
+  readonly regradable?: boolean;
+  readonly editable?: boolean;
 }
 
 export interface AddEvalConfigsResponseApi {
@@ -21184,6 +21275,7 @@ export interface RunNewEvalsResponseApi {
   message: string;
   run_test_id: string;
   call_execution_count: number;
+  dispatched: boolean;
 }
 
 export interface RunTestScenarioItemResponseApi {
@@ -25411,6 +25503,18 @@ export interface OverviewApiResponseApi {
   result: OverviewResponseApi;
 }
 
+export interface FeedRedirectApi {
+  /** @minLength 1 */
+  requested_cluster_id: string;
+  /** @minLength 1 */
+  resolved_cluster_id: string;
+}
+
+export interface FeedRedirectApiResponseApi {
+  status?: boolean;
+  result: FeedRedirectApi;
+}
+
 export interface RootCauseApi {
   rank: number;
   /** @minLength 1 */
@@ -25714,6 +25818,283 @@ export interface InvestigationControlErrorApi {
   details?: InvestigationControlErrorApiDetails;
 }
 
+export interface ConversationEvidenceRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationCallAgentApiId = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationCallAgentApiVersion = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationCallAgentApiName = JsonValueApi;
+
+export interface ConversationCallAgentApi {
+  /** Any valid JSON value. */
+  id: ConversationCallAgentApiId;
+  /** Any valid JSON value. */
+  version: ConversationCallAgentApiVersion;
+  /** Any valid JSON value. */
+  name: ConversationCallAgentApiName;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationCallApiStatus = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationCallApiDirection = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationCallApiEndedReason = JsonValueApi;
+
+export interface ConversationCallApi {
+  /** Any valid JSON value. */
+  status: ConversationCallApiStatus;
+  /** Any valid JSON value. */
+  direction: ConversationCallApiDirection;
+  duration_seconds: number | null;
+  /** Any valid JSON value. */
+  ended_reason: ConversationCallApiEndedReason;
+  agent: ConversationCallAgentApi;
+}
+
+export type ConversationVariablesApiConfigured = {
+  [key: string]: JsonValueApi;
+};
+
+export type ConversationVariablesApiCollected = { [key: string]: JsonValueApi };
+
+export interface ConversationVariablesApi {
+  configured: ConversationVariablesApiConfigured;
+  collected: ConversationVariablesApiCollected;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationAnalysisApiSummary = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationAnalysisApiSuccessful = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationAnalysisApiInVoicemail = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationAnalysisApiSentiment = JsonValueApi;
+
+export type ConversationAnalysisApiFlags = { [key: string]: JsonValueApi };
+
+export interface ConversationAnalysisApi {
+  /** Any valid JSON value. */
+  summary: ConversationAnalysisApiSummary;
+  /** Any valid JSON value. */
+  successful: ConversationAnalysisApiSuccessful;
+  /** Any valid JSON value. */
+  in_voicemail: ConversationAnalysisApiInVoicemail;
+  /** Any valid JSON value. */
+  sentiment: ConversationAnalysisApiSentiment;
+  flags: ConversationAnalysisApiFlags;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationLatencyApiP50 = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationLatencyApiP90 = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationLatencyApiMax = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationLatencyApiNum = JsonValueApi;
+
+export interface ConversationLatencyApi {
+  /** Any valid JSON value. */
+  p50: ConversationLatencyApiP50;
+  /** Any valid JSON value. */
+  p90: ConversationLatencyApiP90;
+  /** Any valid JSON value. */
+  max: ConversationLatencyApiMax;
+  /** Any valid JSON value. */
+  num: ConversationLatencyApiNum;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiText = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiId = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiName = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiArguments = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiOk = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiContent = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiTo = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiType = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiDigit = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiMediaItem = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type ConversationTurnApiFrom = JsonValueApi;
+
+export interface ConversationTurnApi {
+  /** @minimum 0 */
+  i: number;
+  /** @minLength 1 */
+  role: string;
+  start?: number | null;
+  end?: number | null;
+  /** Any valid JSON value. */
+  text?: ConversationTurnApiText;
+  spoken?: boolean;
+  at?: number | null;
+  /** Any valid JSON value. */
+  id?: ConversationTurnApiId;
+  /** Any valid JSON value. */
+  name?: ConversationTurnApiName;
+  /** Any valid JSON value. */
+  arguments?: ConversationTurnApiArguments;
+  /** Any valid JSON value. */
+  ok?: ConversationTurnApiOk;
+  /** Any valid JSON value. */
+  content?: ConversationTurnApiContent;
+  /** Any valid JSON value. */
+  to?: ConversationTurnApiTo;
+  /** Any valid JSON value. */
+  type?: ConversationTurnApiType;
+  /** Any valid JSON value. */
+  digit?: ConversationTurnApiDigit;
+  media?: ConversationTurnApiMediaItem[];
+  /** Any valid JSON value. */
+  from?: ConversationTurnApiFrom;
+}
+
+export type ConversationProviderLogIssueApiLevel =
+  (typeof ConversationProviderLogIssueApiLevel)[keyof typeof ConversationProviderLogIssueApiLevel];
+
+export const ConversationProviderLogIssueApiLevel = {
+  warn: "warn",
+  error: "error",
+} as const;
+
+export interface ConversationProviderLogIssueApi {
+  at: number;
+  level: ConversationProviderLogIssueApiLevel;
+  message: string;
+}
+
+export type ConversationDossierApiLatencyMs = {
+  [key: string]: ConversationLatencyApi;
+};
+
+export interface ConversationDossierApi {
+  /** @minLength 1 */
+  provider: string;
+  agent_instructions: string | null;
+  call: ConversationCallApi;
+  variables: ConversationVariablesApi;
+  analysis: ConversationAnalysisApi;
+  latency_ms: ConversationDossierApiLatencyMs;
+  turns: ConversationTurnApi[];
+  provider_log_issues?: ConversationProviderLogIssueApi[];
+  not_included: string[];
+}
+
+export type ConversationEvidenceRowApiAttrsString = { [key: string]: string };
+
+export interface ConversationEvidenceRowApi {
+  project_id: string;
+  trace_id: string;
+  org_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  id: string;
+  parent_span_id: string;
+  name: string;
+  /** @minLength 1 */
+  observation_type: string;
+  start_time: string;
+  end_time: string | null;
+  attrs_string: ConversationEvidenceRowApiAttrsString;
+  conversation: ConversationDossierApi;
+}
+
+export interface ConversationEvidenceResponseApi {
+  rows: ConversationEvidenceRowApi[];
+}
+
 export interface SimulationEvidenceRequestApi {
   /**
    * @minLength 1
@@ -25748,6 +26129,18 @@ export type InvestigationClaimApiWorkloadType =
 export const InvestigationClaimApiWorkloadType = {
   trace: "trace",
   simulation_test_execution: "simulation_test_execution",
+} as const;
+
+export interface InvestigationEvidenceWindowApi {
+  start: string;
+  end: string;
+}
+
+export type InvestigationClaimApiEvidenceSource =
+  (typeof InvestigationClaimApiEvidenceSource)[keyof typeof InvestigationClaimApiEvidenceSource];
+
+export const InvestigationClaimApiEvidenceSource = {
+  conversation: "conversation",
 } as const;
 
 export interface InvestigationMemoryEntryApi {
@@ -25820,6 +26213,8 @@ export interface InvestigationClaimApi {
   lease_token: string;
   lease_expires_at: string;
   read_cutoff: string;
+  evidence_window?: InvestigationEvidenceWindowApi;
+  evidence_source?: InvestigationClaimApiEvidenceSource;
   /**
    * @minLength 1
    * @maxLength 20
@@ -25843,6 +26238,7 @@ export type UpdateGroupingAttemptApiAction =
 export const UpdateGroupingAttemptApiAction = {
   renew: "renew",
   cancel: "cancel",
+  fail: "fail",
 } as const;
 
 export interface UpdateGroupingAttemptApi {
@@ -25852,11 +26248,15 @@ export interface UpdateGroupingAttemptApi {
    */
   lease_token: string;
   action: UpdateGroupingAttemptApiAction;
+  /** @maxLength 100 */
+  failure_code?: string;
 }
 
 export interface GroupingControlResponseApi {
   /** @minLength 1 */
   state?: string;
+  /** @minLength 1 */
+  failure_code?: string;
   /** @minLength 1 */
   status?: string;
   checkpoint_revision?: number;
@@ -26949,6 +27349,14 @@ export interface SpanObserveIndexQueryApi {
   filters?: string;
 }
 
+export type SpanListColumnConfigApiTargetType =
+  (typeof SpanListColumnConfigApiTargetType)[keyof typeof SpanListColumnConfigApiTargetType];
+
+export const SpanListColumnConfigApiTargetType = {
+  span: "span",
+  trace: "trace",
+} as const;
+
 /**
  * Any valid JSON value.
  */
@@ -26984,6 +27392,7 @@ export interface SpanListColumnConfigApi {
   choices_map?: SpanListColumnConfigApiChoicesMap;
   /** @minLength 1 */
   eval_template_id?: string | null;
+  target_type?: SpanListColumnConfigApiTargetType | null;
   /** Any valid JSON value. */
   annotators?: SpanListColumnConfigApiAnnotators;
   /** @minLength 1 */
@@ -28755,6 +29164,14 @@ export interface TraceSessionTableRowApi {
   [key: string]: JsonValueApi | undefined;
 }
 
+export type TraceObserveColumnConfigApiTargetType =
+  (typeof TraceObserveColumnConfigApiTargetType)[keyof typeof TraceObserveColumnConfigApiTargetType];
+
+export const TraceObserveColumnConfigApiTargetType = {
+  span: "span",
+  trace: "trace",
+} as const;
+
 /**
  * Any valid JSON value.
  */
@@ -28790,6 +29207,7 @@ export interface TraceObserveColumnConfigApi {
   choices_map?: TraceObserveColumnConfigApiChoicesMap;
   /** @minLength 1 */
   eval_template_id?: string | null;
+  target_type?: TraceObserveColumnConfigApiTargetType | null;
   /** Any valid JSON value. */
   annotators?: TraceObserveColumnConfigApiAnnotators;
   /** @minLength 1 */
@@ -29240,6 +29658,7 @@ export type TraceObserveListResultApiTableItem = {
 
 export interface TraceObserveListResultApi {
   metadata: TraceObserveListMetadataApi;
+  /** Observe eval bool and choice cells are counts of completed attempts; a detail eval_rollup separately selects the latest completed row per span. */
   table: TraceObserveListResultApiTableItem[];
   config: TraceObserveColumnConfigApi[];
 }
@@ -29372,6 +29791,69 @@ export interface TraceVoiceCallListQueryApi {
   allow_sampled?: boolean;
 }
 
+export type TraceVoiceCallDetailResultApiEvalRollupScope =
+  (typeof TraceVoiceCallDetailResultApiEvalRollupScope)[keyof typeof TraceVoiceCallDetailResultApiEvalRollupScope];
+
+export const TraceVoiceCallDetailResultApiEvalRollupScope = {
+  trace: "trace",
+  span: "span",
+} as const;
+
+export type EvalRollupEvalApiTargetType =
+  (typeof EvalRollupEvalApiTargetType)[keyof typeof EvalRollupEvalApiTargetType];
+
+export const EvalRollupEvalApiTargetType = {
+  span: "span",
+  trace: "trace",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalRollupSpanApiValue = JsonValueApi;
+
+export interface EvalRollupSpanApi {
+  /** @minLength 1 */
+  span_id: string;
+  span_name?: string;
+  /** Any valid JSON value. */
+  value?: EvalRollupSpanApiValue | null;
+  /** @minLength 1 */
+  explanation?: string | null;
+  error?: boolean;
+  /** @minLength 1 */
+  status?: string | null;
+  eval_config_id?: string;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalRollupEvalApiChoicesMap = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalRollupEvalApiAggregate = JsonValueApi;
+
+export interface EvalRollupEvalApi {
+  /** @minLength 1 */
+  eval_config_id: string;
+  /** @minLength 1 */
+  eval_name: string;
+  /** @minLength 1 */
+  output_type?: string | null;
+  /** @minLength 1 */
+  template_type?: string | null;
+  target_type?: EvalRollupEvalApiTargetType | null;
+  /** Any valid JSON value. */
+  choices_map?: EvalRollupEvalApiChoicesMap | null;
+  /** Any valid JSON value. */
+  aggregate: EvalRollupEvalApiAggregate;
+  spans: EvalRollupSpanApi[];
+  error?: boolean;
+}
+
 export type TraceVoiceCallDetailResultApiCostBreakdown = {
   [key: string]: unknown;
 };
@@ -29404,6 +29886,12 @@ export type TraceVoiceCallDetailResultApiObservationSpanItem = {
 
 export type TraceVoiceCallDetailResultApiEvalOutputs = {
   [key: string]: unknown;
+};
+
+export type TraceVoiceCallDetailResultApiEvalRollup = {
+  scope: TraceVoiceCallDetailResultApiEvalRollupScope;
+  evals: EvalRollupEvalApi[];
+  error?: boolean;
 };
 
 export type TraceVoiceCallDetailResultApiScenarioGraph = {
@@ -29464,6 +29952,7 @@ export interface TraceVoiceCallDetailResultApi {
   call_metadata: TraceVoiceCallDetailResultApiCallMetadata;
   observation_span: TraceVoiceCallDetailResultApiObservationSpanItem[];
   eval_outputs: TraceVoiceCallDetailResultApiEvalOutputs;
+  eval_rollup?: TraceVoiceCallDetailResultApiEvalRollup | null;
   /** @minLength 1 */
   call_execution_id?: string | null;
   /** @minLength 1 */
@@ -29492,11 +29981,38 @@ export interface TraceVoiceCallDetailResponseApi {
   result: TraceVoiceCallDetailResultApi;
 }
 
-export type TraceDetailResultApiTrace = { [key: string]: unknown };
+export type EvalRollupApiScope =
+  (typeof EvalRollupApiScope)[keyof typeof EvalRollupApiScope];
 
-export type TraceDetailResultApiObservationSpansItem = {
-  [key: string]: unknown;
-};
+export const EvalRollupApiScope = {
+  trace: "trace",
+  span: "span",
+} as const;
+
+export interface EvalRollupApi {
+  scope: EvalRollupApiScope;
+  evals: EvalRollupEvalApi[];
+  error?: boolean;
+}
+
+export type TraceDetailSpanApiObservationSpan = { [key: string]: unknown };
+
+export type TraceDetailSpanApiChildrenItem = { [key: string]: unknown };
+
+export type TraceDetailSpanApiEvalScoresItem = { [key: string]: unknown };
+
+export type TraceDetailSpanApiAnnotationsItem = { [key: string]: unknown };
+
+export interface TraceDetailSpanApi {
+  observation_span: TraceDetailSpanApiObservationSpan;
+  children?: TraceDetailSpanApiChildrenItem[];
+  /** Raw eval rows retained for backwards-compatible array consumers. */
+  eval_scores?: TraceDetailSpanApiEvalScoresItem[];
+  eval_rollup?: EvalRollupApi;
+  annotations?: TraceDetailSpanApiAnnotationsItem[];
+}
+
+export type TraceDetailResultApiTrace = { [key: string]: unknown };
 
 export type TraceDetailResultApiSummary = { [key: string]: unknown };
 
@@ -29504,7 +30020,7 @@ export type TraceDetailResultApiGraph = { [key: string]: unknown };
 
 export interface TraceDetailResultApi {
   trace: TraceDetailResultApiTrace;
-  observation_spans: TraceDetailResultApiObservationSpansItem[];
+  observation_spans: TraceDetailSpanApi[];
   summary: TraceDetailResultApiSummary;
   graph: TraceDetailResultApiGraph;
 }
@@ -29883,6 +30399,8 @@ export interface UsersTableRowApi {
   bool_eval_pass_rate?: number;
   avg_output_float?: number;
   project_id?: string;
+  /** @minLength 1 */
+  project_name?: string;
   /** @minLength 1 */
   user_id_type?: string;
   /** @minLength 1 */
@@ -31980,6 +32498,10 @@ export type AgentccAnalyticsOverviewParams = {
    * @minLength 1
    */
   granularity?: string;
+  /**
+   * Gateway key id (not the API key's UUID primary key).
+   * @maxLength 255
+   */
   api_key_id?: string;
 };
 
@@ -32214,6 +32736,10 @@ export type AgentccRequestLogsListParams = {
   limit?: number;
   user_id?: string;
   session_id?: string;
+  /**
+   * Gateway key id (not the API key's UUID primary key).
+   * @maxLength 255
+   */
   api_key_id?: string;
   request_id?: string;
   /**
@@ -34994,6 +35520,10 @@ export type TracerFeedIssuesOverviewListParams = {
    * @maximum 200
    */
   rep_limit?: number;
+};
+
+export type TracerFeedIssuesRedirectListParams = {
+  project_id?: string;
 };
 
 export type TracerFeedIssuesRootCauseListParams = {

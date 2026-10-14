@@ -141,15 +141,32 @@ describe("executionToRun", () => {
     expect(state("Cancelled")).toBe("cancelled");
   });
 
-  it("marks only a pending, running or evaluating run as stoppable", () => {
+  it("marks only a pending or running run as stoppable", () => {
     const stoppable = (status) => executionToRun({ id: "x", status, total_chats: 1 }).stoppable;
     expect(stoppable("Pending")).toBe(true);
     expect(stoppable("Running")).toBe(true);
-    expect(stoppable("Evaluating")).toBe(true);
+    // Grading finishes on its own; the server refuses to stop it.
+    expect(stoppable("Evaluating")).toBe(false);
     // Already stopping, or finished — nothing left to stop.
     expect(stoppable("Cancelling")).toBe(false);
     expect(stoppable("Completed")).toBe(false);
     expect(stoppable("Cancelled")).toBe(false);
+  });
+
+  it("marks only a run whose evals are being graded as grading", () => {
+    const grading = (status) =>
+      executionToRun({ id: "x", status, total_chats: 1 }).grading;
+    expect(grading("Evaluating")).toBe(true);
+    for (const status of [
+      "Pending",
+      "Running",
+      "Cancelling",
+      "Completed",
+      "Failed",
+      "Cancelled",
+    ]) {
+      expect(grading(status)).toBe(false);
+    }
   });
 
   it("reads a stopped run as cancelled, not failed", () => {
