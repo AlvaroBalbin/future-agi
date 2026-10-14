@@ -924,7 +924,9 @@ class Auth0CallbackView(APIView):
             return HttpResponseRedirect(redirect_url)
         except Exception as exc:
             logger.error(
-                "oauth_callback_failed", provider="auth0", error_class=type(exc).__name__
+                "oauth_callback_failed",
+                provider="auth0",
+                error_class=type(exc).__name__,
             )
             encoded = urlsafe_base64_encode(b"Unable to process OAuth callback")
             redirect_url = f"{default_error_next_url}&reason={encoded}"
@@ -1058,7 +1060,9 @@ class GithubCallbackView(APIView):
 
         except Exception as exc:
             logger.error(
-                "oauth_callback_failed", provider="github", error_class=type(exc).__name__
+                "oauth_callback_failed",
+                provider="github",
+                error_class=type(exc).__name__,
             )
             encoded = urlsafe_base64_encode(b"Unable to process OAuth callback")
             redirect_url = f"{default_error_next_url}&reason={encoded}"
@@ -1196,7 +1200,9 @@ class MicrosoftCallbackView(APIView):
 
         except Exception as exc:
             logger.error(
-                "oauth_callback_failed", provider="microsoft", error_class=type(exc).__name__
+                "oauth_callback_failed",
+                provider="microsoft",
+                error_class=type(exc).__name__,
             )
             encoded = urlsafe_base64_encode(b"Unable to process OAuth callback")
             redirect_url = f"{default_error_next_url}&reason={encoded}"

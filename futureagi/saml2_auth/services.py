@@ -285,7 +285,8 @@ def stale_binder_cookies(cookies: Mapping[str, str]) -> list[str]:
         if (
             attempt is None
             or attempt.expires_at <= now
-            or attempt.state not in {
+            or attempt.state
+            not in {
                 SamlLoginAttempt.State.PENDING,
                 SamlLoginAttempt.State.CLAIMED,
             }

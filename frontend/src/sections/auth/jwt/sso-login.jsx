@@ -19,16 +19,13 @@ import { useSnackbar } from "src/components/snackbar";
 import { Box, Divider } from "@mui/material";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import RightSectionAuth from "./RightSectionAuth";
+import { getSsoRedirectUrl } from "./sso-redirect";
 
 // ----------------------------------------------------------------------
 
 const SSOSchema = z.object({
   email: z.string().email("Enter valid email address"),
 });
-
-export function getSsoRedirectUrl(data) {
-  return data?.result?.url || null;
-}
 
 export default function SSOLogin() {
   const navigate = useNavigate();

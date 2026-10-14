@@ -9,7 +9,12 @@ from tfc.logging.processors import SamlDependencyRedactFilter, scrub_saml_event
 
 @pytest.mark.parametrize(
     "logger_name",
-    ["saml2_auth.views", "saml2_auth.oauth", "saml2_auth.security.child", "accounts.views"],
+    [
+        "saml2_auth.views",
+        "saml2_auth.oauth",
+        "saml2_auth.security.child",
+        "accounts.views",
+    ],
 )
 def test_non_security_logger_preserves_oauth_diagnostics(logger_name):
     event = {
@@ -82,7 +87,9 @@ def test_saml_security_logger_preserves_formatter_metadata_and_bounds_fields():
     assert result["reason"] == "x" * 128
 
 
-@pytest.mark.parametrize("logger_name", ["saml2", "saml2.response", "xmlschema.validators"])
+@pytest.mark.parametrize(
+    "logger_name", ["saml2", "saml2.response", "xmlschema.validators"]
+)
 def test_dependency_logs_still_drop_raw_fields(logger_name):
     result = scrub_saml_event(
         None,

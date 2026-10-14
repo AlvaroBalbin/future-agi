@@ -55,9 +55,7 @@ def test_saml_session_cannot_rename_passkey(idp_a, make_saml_token, saml_tenants
     assert passkey.name == "Original"
 
 
-def test_saml_session_cannot_mint_user_api_key(
-    idp_a, make_saml_token, saml_tenants
-):
+def test_saml_session_cannot_mint_user_api_key(idp_a, make_saml_token, saml_tenants):
     _row, token = make_saml_token(saml_tenants.a1, saml_tenants.org_a, idp_a)
 
     response = _bearer_client(token).post(
