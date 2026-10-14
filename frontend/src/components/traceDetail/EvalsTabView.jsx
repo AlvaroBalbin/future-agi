@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Chip, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Markdown from "react-markdown";
 import Iconify from "src/components/iconify";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import { enqueueSnackbar } from "notistack";
 import EvalErrorLocalization from "./EvalErrorLocalization";
 import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
@@ -112,8 +113,71 @@ export function scoreColor(score) {
   };
 }
 
-// Score plus the 25% the action column would take.
-const SCORE_WIDTH_WITHOUT_ACTIONS = "40%";
+// Resizable columns. Until the user drags a header edge the table keeps its
+// percentage layout; the first drag freezes every column at its rendered
+// pixel width so only the dragged column changes. Widths persist per viewer.
+const COL_MIN_WIDTH = { name: 80, score: 60, span: 80 };
+const ACTION_COL_MIN_WIDTH = 90;
+const CHEVRON_COL_WIDTH = 20;
+const ROW_PADDING_X = 24;
+
+const colWidthsStorageKey = (showSpanColumn) =>
+  `evals-tab-col-widths:${showSpanColumn ? "span" : "nospan"}`;
+
+function readColWidths(storageKey, columnKeys) {
+  try {
+    const stored = JSON.parse(localStorage.getItem(storageKey));
+    return columnKeys.every((key) => Number.isFinite(stored?.[key]))
+      ? stored
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeColWidths(storageKey, widths) {
+  try {
+    if (widths) localStorage.setItem(storageKey, JSON.stringify(widths));
+    else localStorage.removeItem(storageKey);
+  } catch {
+    // Storage unavailable: the widths last for this view only.
+  }
+}
+
+/** Per-column sx for the header and every row. */
+function columnLayout(colWidths, showSpanColumn, showActions) {
+  const percent = {
+    name: showSpanColumn ? "30%" : "60%",
+    score: showActions ? "15%" : "40%",
+    span: "30%",
+  };
+  if (!colWidths) {
+    return {
+      row: {},
+      name: { width: percent.name },
+      score: { width: percent.score },
+      span: { width: percent.span },
+      action: { width: "25%", flexShrink: 0 },
+    };
+  }
+  const fixed = (key) => ({ width: colWidths[key], flexShrink: 0 });
+  const dataWidth =
+    colWidths.name + colWidths.score + (showSpanColumn ? colWidths.span : 0);
+  return {
+    // Wider than the drawer scrolls horizontally instead of squeezing.
+    row: {
+      minWidth:
+        CHEVRON_COL_WIDTH +
+        dataWidth +
+        (showActions ? ACTION_COL_MIN_WIDTH : 0) +
+        ROW_PADDING_X,
+    },
+    name: fixed("name"),
+    score: fixed("score"),
+    span: fixed("span"),
+    action: { flex: `1 0 ${ACTION_COL_MIN_WIDTH}px` },
+  };
+}
 
 /** Single eval row with collapsible explanation + optional "View span" */
 const EvalTableRow = ({
@@ -122,6 +186,7 @@ const EvalTableRow = ({
   showSpanColumn,
   onFixWithFalcon,
   showFixWithFalcon,
+  layout,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const showActions = !!onSelectSpan;
@@ -206,6 +271,7 @@ const EvalTableRow = ({
           borderColor: "divider",
           "&:hover": { bgcolor: "action.hover" },
           minHeight: 32,
+          ...layout.row,
         }}
       >
         {/* Expand chevron */}
@@ -228,9 +294,10 @@ const EvalTableRow = ({
 
         {/* Eval name — widens to fill space when Span column is hidden */}
         <Box
+          data-testid={`evals-col-name-${ev.id}`}
           onClick={() => canExpand && setExpanded((p) => !p)}
           sx={{
-            width: showSpanColumn ? "30%" : "60%",
+            ...layout.name,
             display: "flex",
             alignItems: "center",
             gap: 0.5,
@@ -238,9 +305,11 @@ const EvalTableRow = ({
             cursor: canExpand ? "pointer" : "default",
           }}
         >
-          <Typography noWrap sx={{ fontSize: 11.5, fontWeight: 500 }}>
-            {evalName}
-          </Typography>
+          <OverflowTooltip title={evalName}>
+            <Typography noWrap sx={{ fontSize: 11.5, fontWeight: 500 }}>
+              {evalName}
+            </Typography>
+          </OverflowTooltip>
           {ev.removed && (
             <Chip
               data-testid="removed-eval-marker"
@@ -265,7 +334,7 @@ const EvalTableRow = ({
         <Box
           data-testid="eval-score-cell"
           sx={{
-            width: showActions ? "15%" : SCORE_WIDTH_WITHOUT_ACTIONS,
+            ...layout.score,
             minHeight: 22,
             display: "flex",
             flexWrap: "wrap",
@@ -279,18 +348,19 @@ const EvalTableRow = ({
             />
           ) : ev.score_items?.length ? (
             ev.score_items.map((item, i) => (
-              <Chip
-                key={i}
-                label={item}
-                size="small"
-                variant="outlined"
-                sx={{
-                  borderRadius: "4px",
-                  borderColor: "purple.500",
-                  color: "purple.500",
-                  typography: "s3",
-                }}
-              />
+              <OverflowTooltip key={i} title={item}>
+                <Chip
+                  label={item}
+                  size="small"
+                  variant="outlined"
+                  sx={{
+                    borderRadius: "4px",
+                    borderColor: "purple.500",
+                    color: "purple.500",
+                    typography: "s3",
+                  }}
+                />
+              </OverflowTooltip>
             ))
           ) : (
             <Typography
@@ -313,12 +383,14 @@ const EvalTableRow = ({
 
         {/* Span name — hidden for single-call views (voice drawer) */}
         {showSpanColumn && (
-          <Typography
-            noWrap
-            sx={{ width: "30%", fontSize: 10.5, color: "text.secondary" }}
-          >
-            {ev.spanName || ""}
-          </Typography>
+          <OverflowTooltip title={ev.spanName || ""}>
+            <Typography
+              noWrap
+              sx={{ ...layout.span, fontSize: 10.5, color: "text.secondary" }}
+            >
+              {ev.spanName || ""}
+            </Typography>
+          </OverflowTooltip>
         )}
 
         {/* Action buttons — only where an eval can jump to its span */}
@@ -326,11 +398,10 @@ const EvalTableRow = ({
           <Box
             data-testid="eval-actions-column"
             sx={{
-              width: "25%",
+              ...layout.action,
               display: "flex",
               gap: 0.5,
               justifyContent: "flex-end",
-              flexShrink: 0,
             }}
           >
             {ev.spanId && (
@@ -471,6 +542,7 @@ EvalTableRow.propTypes = {
   showSpanColumn: PropTypes.bool,
   onFixWithFalcon: PropTypes.func,
   showFixWithFalcon: PropTypes.bool,
+  layout: PropTypes.object.isRequired,
 };
 
 /**
@@ -493,6 +565,79 @@ const EvalsTabView = ({
   // a span gives its width to Score instead.
   const showActions = !!onSelectSpan;
   const list = useMemo(() => (Array.isArray(evals) ? evals : []), [evals]);
+
+  const widthsKey = colWidthsStorageKey(showSpanColumn);
+  const columnKeys = showSpanColumn
+    ? ["name", "score", "span"]
+    : ["name", "score"];
+  const [colWidths, setColWidths] = useState(() =>
+    readColWidths(widthsKey, columnKeys),
+  );
+  const layout = columnLayout(colWidths, showSpanColumn, showActions);
+  const headerRefs = useRef({});
+  const stopDrag = useRef(null);
+  useEffect(() => () => stopDrag.current?.(), []);
+
+  const startResize = (key, event) => {
+    event.preventDefault();
+    const base = Object.fromEntries(
+      columnKeys.map((k) => [
+        k,
+        Math.round(
+          headerRefs.current[k]?.getBoundingClientRect().width ||
+            COL_MIN_WIDTH[k],
+        ),
+      ]),
+    );
+    const startX = event.clientX;
+    let latest = null;
+    const onMove = (moveEvent) => {
+      latest = {
+        ...base,
+        [key]: Math.max(
+          COL_MIN_WIDTH[key],
+          base[key] + moveEvent.clientX - startX,
+        ),
+      };
+      setColWidths(latest);
+    };
+    const onUp = () => {
+      stopDrag.current?.();
+      if (latest) writeColWidths(widthsKey, latest);
+    };
+    stopDrag.current = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      stopDrag.current = null;
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
+  const resetColWidths = () => {
+    setColWidths(null);
+    writeColWidths(widthsKey, null);
+  };
+
+  const resizeHandle = (key) => (
+    <Box
+      data-testid={`evals-col-resize-${key}`}
+      onMouseDown={(event) => startResize(key, event)}
+      onDoubleClick={resetColWidths}
+      title="Drag to resize. Double-click to reset."
+      sx={{
+        position: "absolute",
+        top: 0,
+        bottom: 0,
+        right: 0,
+        width: 6,
+        cursor: "col-resize",
+        borderRight: "1px solid",
+        borderColor: "divider",
+        "&:hover": { bgcolor: "divider" },
+      }}
+    />
+  );
 
   const totalPass = useMemo(
     () => list.filter((e) => e.score != null && e.score >= 50).length,
@@ -748,47 +893,77 @@ const EvalsTabView = ({
             position: "sticky",
             top: 0,
             zIndex: 1,
+            ...layout.row,
           }}
         >
-          <Box sx={{ width: 20, flexShrink: 0 }} />
+          <Box sx={{ width: CHEVRON_COL_WIDTH, flexShrink: 0 }} />
           <Typography
+            component="div"
+            data-testid="evals-col-header-name"
+            ref={(el) => {
+              headerRefs.current.name = el;
+            }}
             sx={{
-              width: showSpanColumn ? "30%" : "60%",
+              ...layout.name,
+              position: "relative",
               fontSize: 11,
               fontWeight: 600,
               color: "text.secondary",
               display: "flex",
               alignItems: "center",
               gap: 0.5,
+              minWidth: 0,
+              pr: 1,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
             }}
           >
             <Iconify icon="mdi:checkbox-marked-circle-outline" width={12} />
             Evaluation metric
+            {resizeHandle("name")}
           </Typography>
           <Typography
+            component="div"
+            data-testid="evals-col-header-score"
+            ref={(el) => {
+              headerRefs.current.score = el;
+            }}
             sx={{
-              width: showActions ? "15%" : SCORE_WIDTH_WITHOUT_ACTIONS,
+              ...layout.score,
+              position: "relative",
               fontSize: 11,
               fontWeight: 600,
               color: "text.secondary",
+              pl: 0.5,
+              pr: 1,
             }}
           >
             Score
+            {resizeHandle("score")}
           </Typography>
           {showSpanColumn && (
             <Typography
+              component="div"
+              data-testid="evals-col-header-span"
+              ref={(el) => {
+                headerRefs.current.span = el;
+              }}
               sx={{
-                width: "30%",
+                ...layout.span,
+                position: "relative",
                 fontSize: 11,
                 fontWeight: 600,
                 color: "text.secondary",
+                pl: 0.5,
+                pr: 1,
               }}
             >
               Span
+              {resizeHandle("span")}
             </Typography>
           )}
           {showActions && (
-            <Box data-testid="eval-actions-column" sx={{ width: "25%" }} />
+            <Box data-testid="eval-actions-column" sx={layout.action} />
           )}
         </Box>
 
@@ -800,6 +975,7 @@ const EvalsTabView = ({
             showSpanColumn={showSpanColumn}
             onFixWithFalcon={onFixWithFalcon}
             showFixWithFalcon={showFixWithFalcon}
+            layout={layout}
           />
         ))}
       </Box>

@@ -4004,13 +4004,14 @@ class TestExecutor:
 
             # Only update eval_completed if all configs are done and it's not already set
             if all_configs_completed:
-                from simulate.services.harness_evals import runnable_eval_config_ids
+                from simulate.services.harness_evals import live_eval_config_ids
                 from simulate.services.scoring_status import pending_eval_ids
 
                 # A placeholder or dispatch stamp for another live config (a
-                # second job on this call) must hold the call open; a config
+                # second job on this call) must hold the call open, whether
+                # or not that config has a mapping of its own; a config
                 # removed since it was stamped must not.
-                live = runnable_eval_config_ids(run_test.id)
+                live = live_eval_config_ids(run_test.id)
                 if not call_execution.call_metadata:
                     call_execution.call_metadata = {}
 
@@ -4078,6 +4079,10 @@ class TestExecutor:
                                     self._check_and_update_test_execution_completion(
                                         call_execution_locked.test_execution_id
                                     )
+                        else:
+                            self._rebuild_summary_after_late_verdict(
+                                call_execution_locked.test_execution_id
+                            )
                 except Exception as e:
                     # If select_for_update fails (e.g., outside transaction), fall back to regular update
                     # This can happen in some Celery task contexts
@@ -4122,6 +4127,10 @@ class TestExecutor:
                                 self._check_and_update_test_execution_completion(
                                     call_execution.test_execution_id
                                 )
+                    else:
+                        self._rebuild_summary_after_late_verdict(
+                            call_execution.test_execution_id
+                        )
             else:
                 logger.debug(
                     f"Not all eval configs completed for call {call_execution.id}. "
@@ -4135,7 +4144,9 @@ class TestExecutor:
             )
             traceback.print_exc()
 
-    def _check_and_update_test_execution_completion(self, test_execution_id):
+    def _check_and_update_test_execution_completion(
+        self, test_execution_id, *, strict=False
+    ):
         """
         Mark an execution completed once all calls are terminal and every
         successful call has finished scoring: its evaluations and its CSAT.
@@ -4147,8 +4158,14 @@ class TestExecutor:
         ``completed`` run is never moved, and its ``completed_at`` never
         re-stamped.
 
+        Returns whether this call moved the run. An error is logged and reads
+        as not moved, so a caller that has already written its own state is
+        not failed by this check; ``strict`` raises it instead, for the one
+        caller that counts what it settled and what failed.
+
         Args:
             test_execution_id: TestExecution ID to check
+            strict: raise an error instead of logging it
         """
         from simulate.services.scoring_status import (
             CALL_SCORING_OPEN_Q,
@@ -4190,7 +4207,7 @@ class TestExecutor:
                         "simulate_run_cancel_settled",
                         test_execution_id=str(test_execution_id),
                     )
-                    return
+                    return True
 
             if (
                 not has_non_terminal_calls
@@ -4222,11 +4239,16 @@ class TestExecutor:
                         self._after_run_completed(test_execution_id)
 
                     transaction.on_commit(_after_completion, robust=True)
+                    return True
+            return False
         except Exception as e:
+            if strict:
+                raise
             logger.error(
                 f"Error checking test execution completion for {test_execution_id}: {str(e)}"
             )
             traceback.print_exc()
+            return False
 
     def _after_run_completed(self, test_execution_id):
         """Summary and live update for a run the settle just completed."""
@@ -4259,6 +4281,88 @@ class TestExecutor:
                 test_execution_id=str(test_execution_id),
                 hook="notify",
             )
+
+    def _rebuild_summary_after_late_verdict(self, test_execution_id):
+        """Schedule one rebuild of a completed run's summary after a late verdict.
+
+        A grading job that outlives the scoring clock writes its verdict on a
+        call the sweeper already closed, after the run completed and its
+        summary was built without that verdict. The run stays completed and
+        keeps its ``completed_at``, and nothing is written to the summary
+        here. One summary job is scheduled to start after a delay, and a
+        marker in the cache says so for a little less than that delay: every
+        further late verdict of the run that finds the marker schedules
+        nothing, and the job, starting after all of them, reads them all.
+        """
+        from datetime import timedelta
+
+        from django.core.cache import cache
+
+        from simulate.services.scoring_status import (
+            SUMMARY_REBUILD_DELAY_SECONDS,
+            SUMMARY_REBUILD_MARKER_SECONDS,
+            summary_rebuild_marker_key,
+        )
+        from simulate.tasks.eval_summary_tasks import run_eval_summary_task
+
+        if not TestExecution.objects.filter(
+            id=test_execution_id, status=TestExecution.ExecutionStatus.COMPLETED
+        ).exists():
+            # A run still scoring gets its summary from the settle; a failed
+            # or stopped run has none to rebuild.
+            return
+        run_id = str(test_execution_id)
+        key = summary_rebuild_marker_key(run_id)
+        try:
+            scheduled_already = not cache.add(
+                key, "1", timeout=SUMMARY_REBUILD_MARKER_SECONDS
+            )
+        except Exception:
+            # Without the cache nothing says whether a rebuild is scheduled.
+            # One job too many costs less than a summary left without the
+            # verdict, so this one is scheduled.
+            logger.warning(
+                "simulate_summary_rebuild_marker_failed",
+                test_execution_id=run_id,
+                step="set",
+                exc_info=True,
+            )
+            scheduled_already = False
+        if scheduled_already:
+            return
+
+        def _schedule():
+            try:
+                run_eval_summary_task.apply_async(
+                    args=(run_id,),
+                    start_delay=timedelta(seconds=SUMMARY_REBUILD_DELAY_SECONDS),
+                )
+            except Exception:
+                logger.exception(
+                    "simulate_summary_rebuild_handoff_failed",
+                    test_execution_id=run_id,
+                )
+                # No job is coming, so the marker must not make the next late
+                # verdict wait out a window with nothing in it.
+                try:
+                    cache.delete(key)
+                except Exception:
+                    logger.warning(
+                        "simulate_summary_rebuild_marker_failed",
+                        test_execution_id=run_id,
+                        step="clear",
+                        exc_info=True,
+                    )
+                return
+            logger.info(
+                "simulate_summary_rebuild_scheduled",
+                test_execution_id=run_id,
+                delay_seconds=SUMMARY_REBUILD_DELAY_SECONDS,
+            )
+
+        # After commit: nothing is scheduled for a transaction that rolls
+        # back, and the job is not handed over while a row lock is held.
+        transaction.on_commit(_schedule, robust=True)
 
     def _run_simulate_evaluations(
         self,
@@ -4297,7 +4401,10 @@ class TestExecutor:
                 call_execution.call_metadata = {}
             call_execution.call_metadata["eval_started"] = True
             call_execution.save(update_fields=["call_metadata"])
-            from simulate.services.scoring_status import mark_eval_progress
+            from simulate.services.scoring_status import (
+                locked_call_metadata_update,
+                mark_eval_progress,
+            )
 
             # The job clock runs from the last step this job started, so the
             # start and every long step below refresh it.
@@ -4337,17 +4444,23 @@ class TestExecutor:
                             f"Error running tool evaluation for call {call_execution.id}: {str(e)}"
                         )
                         traceback.print_exc()
-                if not call_execution.call_metadata:
-                    call_execution.call_metadata = {}
-                call_execution.call_metadata["eval_completed"] = True
-                update_fields = ["call_metadata"]
-                if (
-                    not skip_status_update
-                    and call_execution.status == CallExecution.CallStatus.ANALYZING
-                ):
-                    call_execution.status = CallExecution.CallStatus.COMPLETED
-                    update_fields.append("status")
-                call_execution.save(update_fields=update_fields)
+
+                def _close_eval_side(metadata):
+                    metadata["eval_completed"] = True
+
+                # Under the row lock, not from this job's copy: the tool judge
+                # above can run for minutes, and saving the copy whole would
+                # put back the CSAT state it held before a CSAT attempt ended.
+                with transaction.atomic():
+                    call_execution.call_metadata = locked_call_metadata_update(
+                        call_execution.id, _close_eval_side
+                    )
+                    if (
+                        not skip_status_update
+                        and call_execution.status == CallExecution.CallStatus.ANALYZING
+                    ):
+                        call_execution.status = CallExecution.CallStatus.COMPLETED
+                        call_execution.save(update_fields=["status"])
                 if not skip_status_update:
                     self._check_and_update_test_execution_completion(
                         call_execution.test_execution_id
@@ -5821,6 +5934,8 @@ class TestExecutor:
             call_execution.save(update_fields=["tool_outputs", "evaluation_data"])
 
             # PHASE 2: Now run the evaluations and update status to "completed" or "error"
+            from simulate.services.scoring_status import mark_eval_progress
+
             for idx, tool_eval_info in tool_eval_ids_map.items():
                 try:
                     tool_eval_id = tool_eval_info["tool_eval_id"]
@@ -5888,6 +6003,11 @@ class TestExecutor:
                         }
                         continue
 
+                    # Each tool call is its own slow model call, so the job
+                    # clock is refreshed before every one of them: a call with
+                    # many tool calls must not read as silent while the judge
+                    # is still working through them.
+                    mark_eval_progress(call_execution)
                     # Now run the evaluation for this specific tool call
                     evaluation = agent._evaluate_single_tool_call(
                         tool_call=tool_call,

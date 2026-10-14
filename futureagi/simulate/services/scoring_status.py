@@ -100,6 +100,22 @@ CALL_SCORING_OPEN_Q = (
     | Q(call_metadata__csat_status__in=CSAT_OPEN_STATUSES)
 )
 
+# A verdict that lands on a call the sweeper already closed, on a run that has
+# completed, has the run's summary built again by a job that starts this long
+# after the first such verdict: one job then covers every late verdict of the
+# run that lands in between.
+SUMMARY_REBUILD_DELAY_SECONDS = 300
+# How long the marker "a rebuild is scheduled for this run" lives: 30 s less
+# than the delay, so a verdict that lands just before the job starts schedules
+# one more job instead of counting on a job that may already have read the
+# calls.
+SUMMARY_REBUILD_MARKER_SECONDS = SUMMARY_REBUILD_DELAY_SECONDS - 30
+
+
+def summary_rebuild_marker_key(test_execution_id: Any) -> str:
+    """Cache key of the marker that a summary rebuild is scheduled for a run."""
+    return f"simulate:summary_rebuild:{test_execution_id}"
+
 
 def locked_call_metadata_update(
     call_execution_id: Any, mutate: Callable[[dict[str, Any]], bool | None]
@@ -242,7 +258,12 @@ def _bounded(stamp: datetime | None, now: datetime) -> datetime | None:
 
 
 def scoring_due(
-    inp: ScoringInput, *, runnable_ids: Iterable[Any], cancelled: bool, now: datetime
+    inp: ScoringInput,
+    *,
+    runnable_ids: Iterable[Any],
+    cancelled: bool,
+    now: datetime,
+    live_ids: Iterable[Any] | None = None,
 ) -> Due:
     """What the 10- and 30-minute clocks say about one finished call at ``now``.
 
@@ -251,11 +272,20 @@ def scoring_due(
     never visits, and add-eval to stop waiting on a job the clocks count as
     lost. Callers pass only calls that have left transport and ``analyzing``:
     for any other call the answer still carries clocks, and they mean nothing.
+
+    ``runnable_ids`` are the configs a receipt grades, which is what a call
+    with no stamps is expected to hold. ``live_ids`` are every config still on
+    the run test (the runnable ones when not given). A placeholder or a stamp
+    counts for any live config, so one with no mapping of its own that was
+    graded again times out like the rest; one removed since does not count.
     """
     meta, outputs = inp.metadata, inp.eval_entries
     runnable_ids = {str(key) for key in runnable_ids}
+    live = runnable_ids
+    if live_ids is not None:
+        live = runnable_ids | {str(key) for key in live_ids}
     if inp.call_status == "completed":
-        pending = pending_eval_ids(meta, outputs, runnable_ids, live_ids=runnable_ids)
+        pending = pending_eval_ids(meta, outputs, runnable_ids, live_ids=live)
     elif inp.call_status in ("failed", "cancelled"):
         # A call that never completed only expects the placeholders a rerun wrote.
         pending = {
@@ -363,13 +393,18 @@ def mark_eval_progress(call_execution: CallExecution) -> None:
         )
 
 
-def settle_run(test_execution_id: Any) -> None:
-    """Run the native settle for this run now; it alone decides the run is done."""
+def settle_run(test_execution_id: Any, *, strict: bool = False) -> bool:
+    """Run the native settle for this run now; it alone decides the run is done.
+
+    Returns whether this call moved the run. An error inside the settle is
+    logged there and reads as not moved, unless ``strict``: the sweeper counts
+    what it settled and what failed, so it asks for the error itself.
+    """
     from simulate.services.test_executor import TestExecutor
 
-    TestExecutor(
+    return TestExecutor(
         initialize_voice_service=False
-    )._check_and_update_test_execution_completion(test_execution_id)
+    )._check_and_update_test_execution_completion(test_execution_id, strict=strict)
 
 
 def settle_run_after_commit(test_execution_id: Any) -> None:
@@ -402,16 +437,22 @@ def needs_write(inp: ScoringInput, due: Due) -> bool:
 
 
 def close_due_scoring(
-    call: CallExecution, runnable_names: Mapping[str, str], now: datetime
+    call: CallExecution,
+    runnable_names: Mapping[str, str],
+    now: datetime,
+    live_names: Mapping[str, str] | None = None,
 ) -> str | None:
     """Write what the clocks say for one locked, completed call.
 
-    Returns the sweep count key for what was written, or ``None`` when the
-    locked copy turned out to have nothing due.
+    ``runnable_names`` and ``live_names`` are ``{config_id: name}`` for the
+    two sets ``scoring_due`` takes. Returns the sweep count key for what was
+    written, or ``None`` when the locked copy turned out to have nothing due.
     """
+    names = {**runnable_names, **(live_names or {})}
     due = scoring_due(
         scoring_input_from_call(call),
         runnable_ids=runnable_names.keys(),
+        live_ids=names.keys(),
         cancelled=call.test_execution.status == "cancelling",
         now=now,
     )
@@ -420,7 +461,7 @@ def close_due_scoring(
     for eval_id, (status, reason, _code) in due.evals.items():
         stored = outputs.get(eval_id)
         name = (
-            runnable_names.get(eval_id)
+            names.get(eval_id)
             or (stored.get("name") if isinstance(stored, dict) else None)
             or eval_id
         )
@@ -521,15 +562,24 @@ def settleable_run_ids() -> QuerySet:
     )
 
 
-def runnable_eval_names(run_test_ids: Iterable[Any]) -> dict[Any, dict[str, str]]:
-    """``{run_test_id: {config_id: name}}`` for the configs the evaluator can run."""
-    names: dict[Any, dict[str, str]] = defaultdict(dict)
+def live_and_runnable_eval_names(
+    run_test_ids: Iterable[Any],
+) -> tuple[dict[Any, dict[str, str]], dict[Any, dict[str, str]]]:
+    """``(live, runnable)``, each ``{run_test_id: {config_id: name}}``.
+
+    Live is every config still on the run test; runnable is the part of it a
+    receipt grades, the configs with a mapping of their own. One query.
+    """
+    live: dict[Any, dict[str, str]] = defaultdict(dict)
+    runnable: dict[Any, dict[str, str]] = defaultdict(dict)
     for run_test_id, config_id, name, mapping in SimulateEvalConfig.objects.filter(
         run_test_id__in=list(run_test_ids), deleted=False
     ).values_list("run_test_id", "id", "name", "mapping"):
+        label = str(name or config_id)
+        live[run_test_id][str(config_id)] = label
         if mapping:
-            names[run_test_id][str(config_id)] = str(name or config_id)
-    return names
+            runnable[run_test_id][str(config_id)] = label
+    return live, runnable
 
 
 def scoring_input_from_values(row: Mapping[str, Any]) -> ScoringInput:
@@ -645,7 +695,13 @@ def derive_call_scoring(
     due = (
         _NO_DUE
         if grading
-        else scoring_due(inp, runnable_ids=runnable_ids, cancelled=cancelled, now=now)
+        else scoring_due(
+            inp,
+            runnable_ids=runnable_ids,
+            live_ids=visible_ids,
+            cancelled=cancelled,
+            now=now,
+        )
     )
     pending = set(due.pending)
     if grading:

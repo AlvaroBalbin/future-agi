@@ -60,6 +60,17 @@ pending entry looks like this:
 }
 ```
 
+`type` is the output type stored with a result. It is `""` on any entry with
+no stored output type: a `pending` entry, a `timed_out` entry the timeout
+wrote, and most `skipped` entries. Not every `skipped` entry: when the
+evaluation step of a call's workflow finds no transcript, it stores each
+skipped entry with the eval's own output type (`Pass/Fail`, `score` or
+`choices`). So a non-empty `type` does not mean the entry has a result;
+read `status` for that. The schema allows the empty string. On every entry
+without a result (`pending`, `timed_out`, `failed`, `skipped`) `value`,
+`score` and `passed` are `null`, which the generated zod schema does not
+allow (the same generator limit as `csat_reason` above).
+
 An eval column with no entry at all on a call still means that eval does not
 apply to that call: show "—".
 
@@ -82,10 +93,15 @@ summary (`execution.summary`) has no `scoring` object.
 `execution.status` can now be `evaluating` for harness, SDK and chat runs:
 the calls have finished, but scoring is still going. The run becomes
 `completed` only when every call's scoring has finished (succeeded, failed
-or timed out). Adding an eval to a completed run puts it back to
+or timed out). A chat run that is `evaluating` becomes `failed` instead when
+all its calls have ended, none of them is `completed` and at least one
+`failed`. Adding an eval to a completed run puts it back to
 `evaluating` until the new grading is done; a `failed` run stays `failed`
-while its calls show the new eval `pending`. A run that was being stopped
-ends `cancelled`.
+while its calls show the new eval `pending`. If a grading job cannot be
+queued, its call goes back to what it showed before; if none can, a run that
+was put back to `evaluating` is `completed` again, unless something else is
+still grading one of its calls. A run that was being stopped ends
+`cancelled`.
 
 ## How to render it
 
@@ -122,13 +138,18 @@ new `timed_out`. Anything that compared an eval's `status` with `completed` or
 "N/A" with the tooltip "Not applicable to this scenario" and does not show its
 `reason`, until it gets one (TH-8098).
 
-Three things to expect:
+Four things to expect:
 
 1. Once the run is finished and nothing is `pending`, polling stops. A late
    result that replaces a `timed_out` entry then shows on the next load, not
    live. On a finished run its row shows it at once, but `summary.scoring`
    can take up to five minutes to count it unless that call is on the page
-   you loaded.
+   you loaded. When an eval result of one of the run's grading jobs lands
+   late on a `completed` run, the run's eval explanation summary is built
+   again, starting about five minutes after the first such result; until
+   then it shows the earlier text. A late result from a rerun of a single
+   call does not trigger it, and a run that ended `failed` or `cancelled`
+   keeps the summary it had.
 2. While a call is still in progress or being analysed (call status
    `pending`, `queued`, `ongoing` or `analyzing`), its CSAT reads `pending`
    even on runs that never score CSAT; it turns `not_applicable` once the
@@ -136,10 +157,21 @@ Three things to expect:
 3. A `pending` cell can turn `timed_out` between two polls with nothing else
    changing: each call's scoring has a time limit (10 minutes without
    progress, or 30 minutes without starting).
+4. A CSAT attempt that fails is tried again, up to three attempts in all.
+   `csat_status` stays `pending` through the retries and reads `failed` only
+   after the last one. One exception: the 10-minute limit of point 3 runs
+   from the start of the latest attempt. If a failed attempt's retry has not
+   started 10 minutes after that attempt began, `csat_status` reads
+   `timed_out`, and the run can become `completed` on it. When the retry
+   starts, `csat_status` reads `pending` again and then takes that attempt's
+   result; a run that completed meanwhile stays `completed`.
 
 ## Fixed reason strings
 
-These are the only non-evaluator reasons you will see, word for word.
+These are the reasons the scoring-status code writes, word for word. A
+`skipped` eval entry written by the evaluation step itself carries that
+step's own fixed text instead (for example when the call has no transcript,
+or when the harness scores that eval during the call).
 
 | Where         | Text                                                            | Meaning                                          |
 | ------------- | --------------------------------------------------------------- | ------------------------------------------------ |

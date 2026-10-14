@@ -26,12 +26,13 @@ from simulate.services.scoring_status import (
     CALL_SCORING_OPEN_Q,
     SCORING_SWEEP_BATCH_SIZE,
     SCORING_SWEEP_TIME_LIMIT_SECONDS,
+    SETTLE_FROM_STATUSES,
     SWEEP_COUNT_KEYS,
     SWEEP_RUN_STATUSES,
     TRANSPORT_RUN_STATUSES,
     close_due_scoring,
+    live_and_runnable_eval_names,
     needs_write,
-    runnable_eval_names,
     scoring_due,
     scoring_input_from_values,
     scoring_values,
@@ -448,11 +449,13 @@ def monitor_test_execution_for_chat(test_execution_id: str):
 
         # All calls reached a terminal state but none completed successfully
         elif all_terminal and not has_any_completed and has_any_failed:
-            # A transport verdict, so only a run still in transport takes it:
-            # the status read above may be stale, and a run since stopped or
-            # scoring must not be overwritten.
+            # Only a run still open takes this verdict: the status read above
+            # may be stale, and a run since stopped or finished must not be
+            # overwritten. A scoring run counts as open: with no completed
+            # call left the settle can never complete it, and it would keep
+            # one of the dispatcher's ten slots for good.
             moved = TestExecution.objects.filter(
-                id=test_execution.id, status__in=TRANSPORT_RUN_STATUSES
+                id=test_execution.id, status__in=SETTLE_FROM_STATUSES
             ).update(status=TestExecution.ExecutionStatus.FAILED)
             if moved:
                 logger.info(
@@ -550,7 +553,9 @@ def _sweep_stuck_scoring_pass(now: datetime) -> dict[str, int]:
         )
     )
     counts["scanned"] = len(rows)
-    names = runnable_eval_names({row["test_execution__run_test_id"] for row in rows})
+    live_names, names = live_and_runnable_eval_names(
+        {row["test_execution__run_test_id"] for row in rows}
+    )
     # Due calls are picked unlocked, before the batch cut, so open calls that
     # are not due never take a slot from calls that are.
     due_ids = []
@@ -559,6 +564,7 @@ def _sweep_stuck_scoring_pass(now: datetime) -> dict[str, int]:
         due = scoring_due(
             inp,
             runnable_ids=names.get(row["test_execution__run_test_id"], {}).keys(),
+            live_ids=live_names.get(row["test_execution__run_test_id"], {}).keys(),
             cancelled=row["test_execution__status"] == "cancelling",
             now=now,
         )
@@ -579,8 +585,12 @@ def _sweep_stuck_scoring_pass(now: datetime) -> dict[str, int]:
                     # A savepoint per row, so one bad row cannot sink the
                     # batch; the locked copy is decided again, not trusted.
                     with transaction.atomic():
+                        run_test_id = call.test_execution.run_test_id
                         key = close_due_scoring(
-                            call, names.get(call.test_execution.run_test_id, {}), now
+                            call,
+                            names.get(run_test_id, {}),
+                            now,
+                            live_names.get(run_test_id, {}),
                         )
                 except Exception:
                     counts["errors"] += 1
@@ -596,7 +606,9 @@ def _sweep_stuck_scoring_pass(now: datetime) -> dict[str, int]:
     # One run that raises must not starve the runs after it.
     for test_execution_id in list(settleable_run_ids()[:SCORING_SWEEP_BATCH_SIZE]):
         try:
-            settle_run(test_execution_id)
+            # Strict, so a settle that fails is counted and logged here
+            # instead of being swallowed, and only a run it moved is counted.
+            moved = settle_run(test_execution_id, strict=True)
         except Exception:
             counts["errors"] += 1
             logger.exception(
@@ -604,13 +616,18 @@ def _sweep_stuck_scoring_pass(now: datetime) -> dict[str, int]:
                 test_execution_id=str(test_execution_id),
             )
             continue
-        counts["settled"] += 1
+        if moved:
+            counts["settled"] += 1
     logger.info("simulate_scoring_sweep_finished", **counts)
     return counts
 
 
+# No retry: the body catches its own errors, so only a pass that outlives its
+# time limit would be retried, and that retry would start beside the thread of
+# the pass it replaces. The next minute's pass picks the work up instead.
 @temporal_activity(
     time_limit=SCORING_SWEEP_TIME_LIMIT_SECONDS,
+    max_retries=0,
     queue="tasks_s",
 )
 def sweep_stuck_scoring() -> dict[str, int]:

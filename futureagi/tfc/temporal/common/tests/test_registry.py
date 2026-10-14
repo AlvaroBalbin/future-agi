@@ -161,6 +161,10 @@ def test_scoring_sweeper_schedule_registered():
     )
     run_input = _build_schedule_for_config(config).action.args[0]
     assert run_input.time_limit == SCORING_SWEEP_TIME_LIMIT_SECONDS == 300
+    # One attempt: a pass that outlives its limit is not started again beside
+    # its own still-running thread.
+    assert sweep_stuck_scoring._metadata["max_retries"] == 0
+    assert run_input.max_retries == 0
     assert "simulate.tasks.chat_sim" in registry.TEMPORAL_ACTIVITY_MODULES
     activities = registry.get_activities_for_queue("tasks_s")
     assert _ACTIVITY_WRAPPERS["sweep_stuck_scoring"] in activities
