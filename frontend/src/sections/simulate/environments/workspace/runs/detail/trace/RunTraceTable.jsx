@@ -13,6 +13,7 @@ import {
   Button,
   Chip,
   FormControlLabel,
+  IconButton,
   Pagination,
   Switch,
   Typography,
@@ -30,6 +31,7 @@ import { AGENT_TYPES } from "src/sections/agents/constants";
 
 import SectionCard from "../../../../components/SectionCard";
 import EmptyState from "../../../../components/EmptyState";
+import EvalColumnActions from "../EvalColumnActions";
 import useSelection from "../../../scenarios/useSelection";
 import TraceTable from "./TraceTable";
 import RerunSelectionBar from "./RerunSelectionBar";
@@ -73,12 +75,15 @@ export default function RunTraceTable({
   initialFilters = {},
   activeCallId = null,
   activePage = null,
+  evalActions = null,
   onRerunScenarios = null,
   runTrials = 1,
   rerunDisabledReason = null,
   onTickableChange,
 }) {
   const [groupBy, setGroupBy] = useState("goal");
+  // The eval column whose ⋮ menu is open: { evalId, name, anchorEl } or null.
+  const [evalMenuFor, setEvalMenuFor] = useState(null);
   const [page, setPage] = useState(1);
   const [visibleColumns, setVisibleColumns] = useState(() =>
     defaultTraceColumns(),
@@ -714,6 +719,29 @@ export default function RunTraceTable({
               activeCallId={activeCallId}
               scrollRef={tableScrollRef}
               runActive={runActive}
+              renderEvalHeaderAction={
+                evalActions
+                  ? (e) => (
+                      <IconButton
+                        size="small"
+                        aria-label={`Actions for ${e.name}`}
+                        onClick={(event) =>
+                          setEvalMenuFor({
+                            evalId: e.id,
+                            name: e.name,
+                            anchorEl: event.currentTarget,
+                          })
+                        }
+                      >
+                        <Iconify
+                          icon="mdi:dots-vertical"
+                          width={16}
+                          sx={{ color: "text.subtitle" }}
+                        />
+                      </IconButton>
+                    )
+                  : null
+              }
               selection={tableSelection}
             />
           )}
@@ -772,6 +800,14 @@ export default function RunTraceTable({
         showAiFilter={false}
         placement="bottom-start"
       />
+
+      {evalActions && (
+        <EvalColumnActions
+          {...evalActions}
+          menuFor={evalMenuFor}
+          onClose={() => setEvalMenuFor(null)}
+        />
+      )}
     </>
   );
 }
@@ -782,6 +818,17 @@ RunTraceTable.propTypes = {
   initialFilters: PropTypes.object,
   activeCallId: PropTypes.string,
   activePage: PropTypes.number,
+  // Given, each eval column header gets a ⋮ menu to re-run or edit that eval.
+  // The run page answers `onRerun(configs)` and `onEdit(config)` with its one
+  // edit form and confirm dialog; `rerunPending` is that page's re-run.
+  evalActions: PropTypes.shape({
+    runTestId: PropTypes.string,
+    canRun: PropTypes.bool,
+    grading: PropTypes.bool,
+    rerunPending: PropTypes.bool,
+    onRerun: PropTypes.func,
+    onEdit: PropTypes.func,
+  }),
   // Given, calls can be ticked and re-run as a new simulation: called with the
   // scenario keys and the trials picked.
   onRerunScenarios: PropTypes.func,
