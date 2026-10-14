@@ -126,7 +126,7 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve provider.
-	provider, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, model)
+	provider, upstreamModel, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, model)
 	if err != nil {
 		writeAnthropicErrorFromError(w, err)
 		return
@@ -142,8 +142,8 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 
 	// Fast path: provider natively speaks Anthropic.
 	if ap, ok := provider.(providers.AnthropicNativeProvider); ok {
-		if rc.Metadata["model_alias"] != "" {
-			body, err = rewriteAnthropicRequestModel(body, rc.Model)
+		if rc.Metadata["model_alias"] != "" || upstreamModel != model {
+			body, err = rewriteRequestModel(body, upstreamModel)
 			if err != nil {
 				anthropicfmt.WriteError(w, http.StatusBadRequest, "invalid_request_error", "Invalid JSON: "+err.Error())
 				return
@@ -187,7 +187,7 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 		rc.Metadata["translation_drops"] = joined
 		w.Header().Set("x-agentcc-translation-drops", joined)
 	}
-	canonicalReq.Model = rc.Model
+	canonicalReq.Model = upstreamModel
 	canonicalReq.Stream = isStream
 
 	if isStream {
@@ -274,7 +274,7 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	provider, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, model)
+	provider, upstreamModel, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, model)
 	if err != nil {
 		writeAnthropicErrorFromError(w, err)
 		return
@@ -282,8 +282,8 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 
 	// Fast path: native Anthropic provider supports count_tokens.
 	if ap, ok := provider.(providers.AnthropicNativeProvider); ok {
-		if rc.Metadata["model_alias"] != "" {
-			body, err = rewriteAnthropicRequestModel(body, rc.Model)
+		if rc.Metadata["model_alias"] != "" || upstreamModel != model {
+			body, err = rewriteRequestModel(body, upstreamModel)
 			if err != nil {
 				anthropicfmt.WriteError(w, http.StatusBadRequest, "invalid_request_error", "Invalid JSON: "+err.Error())
 				return
@@ -315,9 +315,9 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 			"Use /v1/messages — token counts are in the response usage block.", rc.Provider))
 }
 
-// rewriteAnthropicRequestModel changes only the routed model while preserving
-// all other native Anthropic request fields for upstream pass-through.
-func rewriteAnthropicRequestModel(body []byte, model string) ([]byte, error) {
+// rewriteRequestModel changes only the routed model while preserving every
+// other field of a JSON request body forwarded upstream as-is.
+func rewriteRequestModel(body []byte, model string) ([]byte, error) {
 	var request map[string]json.RawMessage
 	if err := json.Unmarshal(body, &request); err != nil {
 		return nil, err

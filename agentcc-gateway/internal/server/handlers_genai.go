@@ -119,10 +119,13 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 	h.applyOrgModelDatabaseOverrides(orgCfg, rc)
 	h.applyOrgModelMapOverrides(orgCfg, rc)
 
-	provider, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, rc.Model)
+	provider, upstreamModel, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, rc.Model)
 	if err != nil {
 		writeGenAIErrorFromError(w, err)
 		return
+	}
+	if upstreamModel != rc.Model {
+		model = providers.ResolveModelName(upstreamModel)
 	}
 
 	// Collect Google-specific headers to forward (only used on native path).
@@ -194,7 +197,7 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 		rc.Metadata["translation_drops"] = joined
 		w.Header().Set("x-agentcc-translation-drops", joined)
 	}
-	canonicalReq.Model = rc.Model
+	canonicalReq.Model = upstreamModel
 	canonicalReq.Stream = action == "streamGenerateContent"
 
 	switch action {

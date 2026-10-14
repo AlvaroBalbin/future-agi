@@ -78,7 +78,7 @@ func (h *Handlers) CreateSpeech(w http.ResponseWriter, r *http.Request) {
 	h.applyOrgModelMapOverrides(orgCfg, rc)
 
 	// Resolve provider.
-	provider, err := h.resolveProvider(ctx, rc, req.Model)
+	provider, upstreamModel, err := h.resolveProvider(ctx, rc, req.Model)
 	if err != nil {
 		if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
 			if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, req.Model); orgP != nil {
@@ -92,8 +92,11 @@ func (h *Handlers) CreateSpeech(w http.ResponseWriter, r *http.Request) {
 			models.WriteErrorFromError(w, err)
 			return
 		}
-	} else if shouldApplyOrgProviderOverride(rc) {
-		provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
+	} else {
+		req.Model = upstreamModel
+		if shouldApplyOrgProviderOverride(rc) {
+			provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
+		}
 	}
 
 	// Type-assert to SpeechProvider.
@@ -215,7 +218,7 @@ func (h *Handlers) CreateTranslation(w http.ResponseWriter, r *http.Request) {
 	h.applyOrgModelMapOverrides(orgCfg, rc)
 
 	// Resolve provider.
-	provider, err := h.resolveProvider(ctx, rc, req.Model)
+	provider, upstreamModel, err := h.resolveProvider(ctx, rc, req.Model)
 	if err != nil {
 		if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
 			if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, req.Model); orgP != nil {
@@ -229,8 +232,11 @@ func (h *Handlers) CreateTranslation(w http.ResponseWriter, r *http.Request) {
 			models.WriteErrorFromError(w, err)
 			return
 		}
-	} else if shouldApplyOrgProviderOverride(rc) {
-		provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
+	} else {
+		req.Model = upstreamModel
+		if shouldApplyOrgProviderOverride(rc) {
+			provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
+		}
 	}
 
 	// Type-assert to TranslationProvider.
@@ -346,7 +352,7 @@ func (h *Handlers) CreateTranscription(w http.ResponseWriter, r *http.Request) {
 	h.applyOrgModelMapOverrides(orgCfg, rc)
 
 	// Resolve provider.
-	provider, err := h.resolveProvider(ctx, rc, req.Model)
+	provider, upstreamModel, err := h.resolveProvider(ctx, rc, req.Model)
 	if err != nil {
 		if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
 			if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, req.Model); orgP != nil {
@@ -360,8 +366,11 @@ func (h *Handlers) CreateTranscription(w http.ResponseWriter, r *http.Request) {
 			models.WriteErrorFromError(w, err)
 			return
 		}
-	} else if shouldApplyOrgProviderOverride(rc) {
-		provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
+	} else {
+		req.Model = upstreamModel
+		if shouldApplyOrgProviderOverride(rc) {
+			provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
+		}
 	}
 
 	// Type-assert to TranscriptionProvider.
@@ -523,7 +532,7 @@ func (h *Handlers) StreamSpeech(w http.ResponseWriter, r *http.Request) {
 	h.applyOrgModelMapOverrides(orgCfg, rc)
 
 	// Resolve provider.
-	provider, err := h.resolveProvider(ctx, rc, req.Model)
+	provider, upstreamModel, err := h.resolveProvider(ctx, rc, req.Model)
 	if err != nil {
 		if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
 			if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, req.Model); orgP != nil {
@@ -537,8 +546,11 @@ func (h *Handlers) StreamSpeech(w http.ResponseWriter, r *http.Request) {
 			models.WriteErrorFromError(w, err)
 			return
 		}
-	} else if shouldApplyOrgProviderOverride(rc) {
-		provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
+	} else {
+		req.Model = upstreamModel
+		if shouldApplyOrgProviderOverride(rc) {
+			provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
+		}
 	}
 
 	// Type-assert to SpeechProvider.
