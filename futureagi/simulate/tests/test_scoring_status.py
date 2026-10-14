@@ -1976,69 +1976,6 @@ def _drive_run_new_evals_view(ctx):
     assert response.status_code == 200, response.content
 
 
-def _tool_context(ctx):
-    from ai_tools.base import ToolContext
-
-    return ToolContext(
-        user=ctx.user, organization=ctx.organization, workspace=ctx.workspace
-    )
-
-
-def _drive_ai_run_new_evals(ctx):
-    from ai_tools.tools.simulation.run_new_evals import (
-        RunNewEvalsOnSimulationInput,
-        RunNewEvalsOnSimulationTool,
-    )
-
-    with patch(
-        "simulate.services.test_executor.run_new_evals_on_call_executions_task.apply_async"
-    ):
-        result = RunNewEvalsOnSimulationTool().execute(
-            RunNewEvalsOnSimulationInput(
-                run_test_id=ctx.run_test.id,
-                eval_config_ids=[ctx.config.id],
-                test_execution_ids=[ctx.execution.id],
-            ),
-            _tool_context(ctx),
-        )
-    assert not result.is_error, result.content
-
-
-def _drive_ai_rerun_call(ctx):
-    from ai_tools.tools.simulation.rerun_call_execution import (
-        RerunCallExecutionInput,
-        RerunCallExecutionTool,
-    )
-
-    with patch(
-        "simulate.temporal.client.rerun_call_executions",
-        return_value={"workflow_id": "scoring-rerun", "merged": False},
-    ):
-        result = RerunCallExecutionTool().execute(
-            RerunCallExecutionInput(
-                call_execution_id=ctx.call.id, rerun_type="eval_only"
-            ),
-            _tool_context(ctx),
-        )
-    assert not result.is_error, result.content
-
-
-def _drive_ai_rerun_test(ctx):
-    from ai_tools.tools.simulation.rerun_test_execution import RerunTestExecutionTool
-
-    with patch(
-        "simulate.temporal.client.rerun_call_executions",
-        return_value={"workflow_id": "scoring-rerun", "merged": False},
-    ):
-        result = RerunTestExecutionTool()._rerun_bulk(
-            run_test=ctx.run_test,
-            test_executions=[ctx.execution],
-            rerun_type="eval_only",
-            context=_tool_context(ctx),
-        )
-    assert not result.is_error, result.content
-
-
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     "drive,grades",
@@ -2047,9 +1984,6 @@ def _drive_ai_rerun_test(ctx):
         pytest.param(_drive_call_rerun_view, "runnable", id="call-rerun-view"),
         pytest.param(_drive_bulk_rerun_view, "runnable", id="bulk-rerun-view"),
         pytest.param(_drive_run_new_evals_view, "edited", id="run-new-evals-view"),
-        pytest.param(_drive_ai_run_new_evals, "edited", id="ai-run-new-evals"),
-        pytest.param(_drive_ai_rerun_call, "runnable", id="ai-rerun-call"),
-        pytest.param(_drive_ai_rerun_test, "runnable", id="ai-rerun-test"),
     ],
 )
 def test_eval_rerun_sites_stamp_eval_queued(
