@@ -1002,22 +1002,14 @@ ALK_HOSTED_BASE_EGRESS_DOMAINS = [
     if domain.strip()
 ]
 # Hosted simulator credentials are platform configuration, not customer job input. Values are
-# resolved only while launching the sandbox and are never persisted on HostedHarnessJob.
+# resolved only while launching the sandbox and are never persisted on HostedHarnessJob. Model
+# calls go through AgentCC, so no model vendor's credential is listed here.
 ALK_HOSTED_SIMULATOR_SECRET_ENV = {
     "SIMULATOR_LIVEKIT_URL": "LIVEKIT_URL",
     "SIMULATOR_LIVEKIT_API_KEY": "LIVEKIT_API_KEY",
     "SIMULATOR_LIVEKIT_API_SECRET": "LIVEKIT_API_SECRET",
     "SIMULATOR_DEEPGRAM_API_KEY": "DEEPGRAM_API_KEY",
     "SIMULATOR_CARTESIA_API_KEY": "CARTESIA_API_KEY",
-    "SIMULATOR_GEMINI_API_KEY": "GEMINI_API_KEY",
-    "SIMULATOR_GOOGLE_API_KEY": "GOOGLE_API_KEY",
-    "SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS_JSON": (
-        "GOOGLE_APPLICATION_CREDENTIALS_JSON"
-    ),
-    "SIMULATOR_GOOGLE_CLOUD_PROJECT": "GOOGLE_CLOUD_PROJECT",
-    "SIMULATOR_GOOGLE_CLOUD_LOCATION": "GOOGLE_CLOUD_LOCATION",
-    "SIMULATOR_GOOGLE_GENAI_USE_VERTEXAI": "GOOGLE_GENAI_USE_VERTEXAI",
-    "SIMULATOR_OPENAI_API_KEY": "OPENAI_API_KEY",
     "SIMULATOR_LLM_PROVIDER": "SIMULATOR_LLM_PROVIDER",
     "SIMULATOR_LLM_MODEL": "SIMULATOR_LLM_MODEL",
     "SIMULATOR_STT_PROVIDER": "SIMULATOR_STT_PROVIDER",
@@ -1029,8 +1021,6 @@ ALK_HOSTED_SIMULATOR_SECRET_ENV = {
 # phone target. Platform configuration, never customer input, so an empty value means no phone
 # run can be started and preflight says so rather than the run failing after authoring is paid for.
 ALK_HOSTED_SIP_OUTBOUND_TRUNK_ID = os.getenv("ALK_HOSTED_SIP_OUTBOUND_TRUNK_ID", "")
-ALK_HOSTED_AUTHORING_CLAUDE_REGION = os.getenv("CLOUD_ML_REGION", "us-east5")
-ALK_HOSTED_AUTHORING_GEMINI_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
 ALK_HOSTED_WEBRTC_EGRESS_CIDRS = [
     cidr.strip()
     for cidr in os.getenv("ALK_HOSTED_WEBRTC_EGRESS_CIDRS", "").split(",")
