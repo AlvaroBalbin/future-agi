@@ -14,10 +14,12 @@ def test_get_messages_valid_template():
     assert messages[1] == {"role": "user", "content": "Expected: val_b"}
 
 
-def test_get_messages_sandboxed_blocks_ssti():
+@pytest.mark.parametrize("field", ["system_message", "user_message"])
+def test_get_messages_sandboxed_blocks_ssti(field):
     malicious = {
-        "system_message": "{{ ''.__class__.__mro__[1].__subclasses__() }}",
+        "system_message": "test",
         "user_message": "test",
     }
+    malicious[field] = "{{ ''.__class__.__mro__[1].__subclasses__() }}"
     with pytest.raises(SecurityError):
         _get_messages(malicious, "a", "b")
