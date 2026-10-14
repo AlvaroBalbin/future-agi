@@ -190,12 +190,19 @@ func (h *Handlers) CreateTranslation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	temperature, err := formTemperature(r)
+	if err != nil {
+		models.WriteError(w, models.ErrBadRequest("invalid_temperature", "temperature must be a number"))
+		return
+	}
+
 	req := models.TranslationRequest{
 		Model:          model,
 		FileData:       fileData,
 		FileName:       header.Filename,
 		Prompt:         r.FormValue("prompt"),
 		ResponseFormat: r.FormValue("response_format"),
+		Temperature:    temperature,
 	}
 
 	rc.Model = req.Model
@@ -275,10 +282,7 @@ func (h *Handlers) CreateTranslation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.setAgentccHeaders(w, rc)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(rc.TranslationResp)
+	h.writeTranscript(w, rc, rc.TranslationResp)
 }
 
 // CreateTranscription handles POST /v1/audio/transcriptions.
@@ -324,12 +328,21 @@ func (h *Handlers) CreateTranscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	temperature, err := formTemperature(r)
+	if err != nil {
+		models.WriteError(w, models.ErrBadRequest("invalid_temperature", "temperature must be a number"))
+		return
+	}
+
 	req := models.TranscriptionRequest{
-		Model:          model,
-		FileData:       fileData,
-		FileName:       header.Filename,
-		Language:       r.FormValue("language"),
-		ResponseFormat: r.FormValue("response_format"),
+		Model:                  model,
+		FileData:               fileData,
+		FileName:               header.Filename,
+		Language:               r.FormValue("language"),
+		Prompt:                 r.FormValue("prompt"),
+		ResponseFormat:         r.FormValue("response_format"),
+		Temperature:            temperature,
+		TimestampGranularities: r.MultipartForm.Value["timestamp_granularities[]"],
 	}
 
 	rc.Model = req.Model
@@ -409,10 +422,33 @@ func (h *Handlers) CreateTranscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.writeTranscript(w, rc, rc.TranscriptionResp)
+}
+
+// formTemperature reads the optional multipart temperature field.
+func formTemperature(r *http.Request) (*float64, error) {
+	raw := r.FormValue("temperature")
+	if raw == "" {
+		return nil, nil
+	}
+	temperature, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return nil, err
+	}
+	return &temperature, nil
+}
+
+// writeTranscript returns the upstream transcription body as received, so
+// verbose_json keeps its segments and text, srt and vtt keep their format.
+func (h *Handlers) writeTranscript(w http.ResponseWriter, rc *models.RequestContext, resp *models.TranscriptionResponse) {
+	contentType := resp.ContentType
+	if contentType == "" {
+		contentType = "application/json"
+	}
 	h.setAgentccHeaders(w, rc)
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(rc.TranscriptionResp)
+	w.Write(resp.Body)
 }
 
 func formatAudioSeconds(seconds float64) string {
