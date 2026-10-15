@@ -573,6 +573,156 @@ for (const surface of [
   });
 }
 
+// Bookmarks: the same date params, arriving in a link instead of a saved view.
+// A bookmark of a preset carries the dates it resolved to when it was made;
+// a full page load of it must query and show the preset as of now.
+const bookmark = (base: string, params: Record<string, unknown>) => {
+  const search = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    search.set(k, typeof v === 'string' ? v : JSON.stringify(v));
+  }
+  return `${base}${base.includes('?') ? '&' : '?'}${search.toString()}`;
+};
+
+for (const surface of [
+  {
+    id: 'OBS-E2E-043', noun: 'trace', kind: 'list', path: 'llm-tracing?tab=traces&selectedTab=trace',
+    dateKey: 'primaryTraceDateFilter', listPath: TRACE_LIST_PATH, colId: 'trace_name',
+  },
+  {
+    id: 'OBS-E2E-044', noun: 'span', kind: 'list', path: 'llm-tracing?tab=traces&selectedTab=spans',
+    dateKey: 'primarySpanDateFilter', listPath: SPAN_LIST_PATH, colId: 'span_name',
+  },
+  {
+    id: 'OBS-E2E-045', noun: 'session', kind: 'list', path: 'sessions?tab=sessions',
+    dateKey: 'sessionDateFilter', listPath: SESSION_LIST_PATH, colId: null,
+  },
+  {
+    id: 'OBS-E2E-046', noun: 'user', kind: 'list', path: 'users?tab=users',
+    dateKey: 'userDateFilter', listPath: USER_LIST_PATH, colId: 'user_id',
+  },
+  {
+    id: 'OBS-E2E-047', noun: 'compare', kind: 'compare',
+    path: 'llm-tracing?tab=traces&selectedTab=trace&showCompare=true',
+    dateKey: 'compareTraceDateFilter', listPath: TRACE_GRAPH_PATH, colId: null,
+  },
+] as const) {
+  const what = surface.kind === 'compare' ? 'compare date' : `${surface.noun} list`;
+  test(`${surface.id}: a bookmarked ${what} link loads its preset date fresh, and a Custom range as bookmarked`, {
+    tag: ['@flow'],
+    annotation: flowAnnotation({
+      id: surface.id, area: 'observe',
+      userGoal: `A user who opens a ${what} bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range`,
+      steps: ['send one trace now and one yesterday at noon so a project auto-creates',
+              `for each preset and Custom, open a ${what} link carrying that option with a range from ~400 days ago`,
+              'open a stale Today link from another page, then go Back'],
+      backendChecks: ['both traces have all their spans in ClickHouse spans (FINAL)',
+                      surface.kind === 'compare'
+                        ? 'each preset link sends the compare graph request with the preset window as of now, never the bookmarked one, from the first request of the page load, and the URL compare date param is rewritten to it'
+                        : `each preset link sends every ${surface.noun}-list request with the preset window as of now, never the bookmarked one, from the first request of the page load, and the URL date param is rewritten to it`,
+                      ...(surface.kind === 'compare' ? [] : [
+                        `Today lists only the today ${surface.noun}, Yesterday only the yesterday ${surface.noun}, and 7D–12M exactly both`]),
+                      'a Custom link keeps its range in the URL and sends it verbatim',
+                      'the rewrite replaces the history entry: Back from the rewritten link returns to the previous page, not to the bookmarked dates'],
+    }),
+  }, async ({ page, actor, probe }, testInfo) => {
+    // SPAN_VISIBLE (15s) + 8 page loads and the Back step, each bounded by
+    // UI_READY (10 × 60s = 600s), past the 120s default; the rest is headroom.
+    test.setTimeout(700_000);
+    const req = await request.newContext();
+    const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
+    const stored = staleRange(400);
+    // Compare links also carry a Custom primary range, older and distinct, so
+    // a graph request with the bookmarked compare window can only be compare.
+    const primary = staleRange(500);
+    const seeded = await test.step('seed a trace now and one yesterday at noon',
+      () => seedTwoDays(actor, probe, req, suffix));
+    await attachSeeded(testInfo, { ...seeded, stored, primary });
+
+    const n = seeded.names;
+    const pick: Record<string, [string[], string[]]> = {
+      trace: [[n.todayRoot], [n.yesterdayRoot]],
+      span: [[n.todayRoot, n.todayChild], [n.yesterdayRoot, n.yesterdayChild]],
+      session: [[seeded.sessionIds.today], [seeded.sessionIds.yesterday]],
+      user: [[n.todayUser], [n.yesterdayUser]],
+      compare: [[], []],
+    };
+    const [today, yesterday] = pick[surface.noun];
+    const both = [...today, ...yesterday];
+    const rows: Record<Option, string[]> = {
+      Today: today, Yesterday: yesterday,
+      '7D': both, '30D': both, '3M': both, '6M': both, '12M': both, Custom: [],
+    };
+    const base = `/dashboard/observe/${seeded.projectId}/${surface.path}`;
+    const linkFor = (option: Option, range = stored) => bookmark(base, {
+      ...(surface.kind === 'compare'
+        ? { primaryTraceDateFilter: { dateFilter: primary, dateOption: 'Custom' } } : {}),
+      [surface.dateKey]: { dateFilter: range, dateOption: option },
+    });
+    const requests = captureRequests(page, surface.listPath, seeded.projectId);
+    const sent = () => requests.map(requestWindow);
+
+    for (const option of OPTIONS) {
+      await test.step(`${option}: open the bookmarked link`, async () => {
+        const before = await presetWindows(page);
+        requests.length = 0;
+        const firstLoad = page.waitForResponse((r) =>
+          new URL(r.url()).pathname === surface.listPath && r.request().method() !== 'OPTIONS',
+          { timeout: UI_READY });
+        await page.goto(linkFor(option), { waitUntil: 'domcontentloaded' });
+        await firstLoad;
+
+        if (option === 'Custom') {
+          expect(urlDateFilter(page, surface.dateKey))
+            .toEqual({ dateFilter: stored, dateOption: 'Custom' });
+          await expect.poll(sent, { timeout: UI_READY }).toContainEqual(toIso(stored));
+          if (surface.kind === 'list') {
+            for (const w of sent()) expect(w).toEqual(toIso(stored));
+            await expect.poll(() => gridRows(page, surface.colId), { timeout: UI_READY })
+              .toEqual([]);
+          }
+          return;
+        }
+
+        await expect.poll(() => urlDateFilter(page, surface.dateKey), { timeout: UI_READY })
+          .not.toEqual({ dateFilter: stored, dateOption: option });
+        const after = await presetWindows(page);
+        const candidates = [before[option], after[option]];
+        expect(candidates.map((w) => ({ dateFilter: w.local, dateOption: option })),
+          `URL date filter for ${option}`).toContainEqual(urlDateFilter(page, surface.dateKey));
+        if (surface.kind === 'compare') {
+          await expect.poll(
+            () => candidates.some((w) => sent().some((x) => JSON.stringify(x) === JSON.stringify(w.iso))),
+            { timeout: UI_READY }).toBe(true);
+          expect(sent(), `no graph request with the bookmarked compare window for ${option}`)
+            .not.toContainEqual(toIso(stored));
+          return;
+        }
+        // Every request since navigation began, so a first fetch on the
+        // bookmarked dates would be caught here.
+        expect(requests.length).toBeGreaterThan(0);
+        for (const w of sent()) {
+          expect(candidates.map((c) => c.iso), `request window for ${option}`).toContainEqual(w);
+        }
+        await expect.poll(() => gridRows(page, surface.colId), { timeout: UI_READY })
+          .toEqual([...rows[option]].sort());
+      });
+    }
+
+    await test.step('Back from a rewritten bookmark skips the bookmarked dates', async () => {
+      const previous = `/dashboard/observe/${seeded.projectId}/llm-tracing?tab=traces`;
+      await page.goto(previous, { waitUntil: 'domcontentloaded' });
+      await page.goto(linkFor('Today'), { waitUntil: 'domcontentloaded' });
+      await expect.poll(() => urlDateFilter(page, surface.dateKey)?.dateFilter, { timeout: UI_READY })
+        .not.toEqual(stored);
+      await page.goBack({ waitUntil: 'domcontentloaded' });
+      await expect(page).toHaveURL((url) => url.searchParams.get('tab') === 'traces'
+        && url.searchParams.get(surface.dateKey) === null, { timeout: UI_READY });
+    });
+    await req.dispose();
+  });
+}
+
 async function attachSeeded(testInfo: TestInfo, body: Record<string, unknown>) {
   await testInfo.attach('seeded', {
     body: JSON.stringify(body, (_, v) => (typeof v === 'bigint' ? v.toString() : v), 2),

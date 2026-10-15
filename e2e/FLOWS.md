@@ -1417,6 +1417,105 @@
 - the Custom view sends and keeps its stored range verbatim and lists neither user
 - opening the views writes nothing back: every tracer_saved_view row in PG still holds its stored range
 
+### OBS-E2E-043 — a bookmarked trace list link loads its preset date fresh, and a Custom range as bookmarked
+
+**Goal:** A user who opens a trace list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:611`  
+**Tags:** —
+
+**User steps:**
+
+1. send one trace now and one yesterday at noon so a project auto-creates
+2. for each preset and Custom, open a trace list link carrying that option with a range from ~400 days ago
+3. open a stale Today link from another page, then go Back
+
+**Backend state verified:**
+
+- both traces have all their spans in ClickHouse spans (FINAL)
+- each preset link sends every trace-list request with the preset window as of now, never the bookmarked one, from the first request of the page load, and the URL date param is rewritten to it
+- Today lists only the today trace, Yesterday only the yesterday trace, and 7D–12M exactly both
+- a Custom link keeps its range in the URL and sends it verbatim
+- the rewrite replaces the history entry: Back from the rewritten link returns to the previous page, not to the bookmarked dates
+
+### OBS-E2E-044 — a bookmarked span list link loads its preset date fresh, and a Custom range as bookmarked
+
+**Goal:** A user who opens a span list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:611`  
+**Tags:** —
+
+**User steps:**
+
+1. send one trace now and one yesterday at noon so a project auto-creates
+2. for each preset and Custom, open a span list link carrying that option with a range from ~400 days ago
+3. open a stale Today link from another page, then go Back
+
+**Backend state verified:**
+
+- both traces have all their spans in ClickHouse spans (FINAL)
+- each preset link sends every span-list request with the preset window as of now, never the bookmarked one, from the first request of the page load, and the URL date param is rewritten to it
+- Today lists only the today span, Yesterday only the yesterday span, and 7D–12M exactly both
+- a Custom link keeps its range in the URL and sends it verbatim
+- the rewrite replaces the history entry: Back from the rewritten link returns to the previous page, not to the bookmarked dates
+
+### OBS-E2E-045 — a bookmarked session list link loads its preset date fresh, and a Custom range as bookmarked
+
+**Goal:** A user who opens a session list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:611`  
+**Tags:** —
+
+**User steps:**
+
+1. send one trace now and one yesterday at noon so a project auto-creates
+2. for each preset and Custom, open a session list link carrying that option with a range from ~400 days ago
+3. open a stale Today link from another page, then go Back
+
+**Backend state verified:**
+
+- both traces have all their spans in ClickHouse spans (FINAL)
+- each preset link sends every session-list request with the preset window as of now, never the bookmarked one, from the first request of the page load, and the URL date param is rewritten to it
+- Today lists only the today session, Yesterday only the yesterday session, and 7D–12M exactly both
+- a Custom link keeps its range in the URL and sends it verbatim
+- the rewrite replaces the history entry: Back from the rewritten link returns to the previous page, not to the bookmarked dates
+
+### OBS-E2E-046 — a bookmarked user list link loads its preset date fresh, and a Custom range as bookmarked
+
+**Goal:** A user who opens a user list bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:611`  
+**Tags:** —
+
+**User steps:**
+
+1. send one trace now and one yesterday at noon so a project auto-creates
+2. for each preset and Custom, open a user list link carrying that option with a range from ~400 days ago
+3. open a stale Today link from another page, then go Back
+
+**Backend state verified:**
+
+- both traces have all their spans in ClickHouse spans (FINAL)
+- each preset link sends every user-list request with the preset window as of now, never the bookmarked one, from the first request of the page load, and the URL date param is rewritten to it
+- Today lists only the today user, Yesterday only the yesterday user, and 7D–12M exactly both
+- a Custom link keeps its range in the URL and sends it verbatim
+- the rewrite replaces the history entry: Back from the rewritten link returns to the previous page, not to the bookmarked dates
+
+### OBS-E2E-047 — a bookmarked compare date link loads its preset date fresh, and a Custom range as bookmarked
+
+**Goal:** A user who opens a compare date bookmark made days ago with a preset date (Today, Yesterday, 7D…12M) sees that preset as of now, while a bookmark with a Custom range shows exactly that range  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:611`  
+**Tags:** —
+
+**User steps:**
+
+1. send one trace now and one yesterday at noon so a project auto-creates
+2. for each preset and Custom, open a compare date link carrying that option with a range from ~400 days ago
+3. open a stale Today link from another page, then go Back
+
+**Backend state verified:**
+
+- both traces have all their spans in ClickHouse spans (FINAL)
+- each preset link sends the compare graph request with the preset window as of now, never the bookmarked one, from the first request of the page load, and the URL compare date param is rewritten to it
+- a Custom link keeps its range in the URL and sends it verbatim
+- the rewrite replaces the history entry: Back from the rewritten link returns to the previous page, not to the bookmarked dates
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle
