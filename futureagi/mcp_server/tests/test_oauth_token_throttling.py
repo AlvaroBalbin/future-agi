@@ -252,3 +252,51 @@ def test_low_volume_authorization_code_exchange_is_allowed(
     assert response.data["token_type"] == "Bearer"
     assert response.data["access_token"]
     assert response.data["refresh_token"]
+
+
+@override_settings(
+    MCP_OAUTH_TOKEN_IP_THROTTLE_RATE="100/min",
+    MCP_OAUTH_TOKEN_CLIENT_THROTTLE_RATE="100/min",
+    MCP_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT=5,
+)
+def test_invalid_client_secret_returns_oauth_error_without_crashing(
+    api_client, oauth_client_app
+):
+    response = api_client.post(
+        TOKEN_URL,
+        {
+            "grant_type": "refresh_token",
+            "refresh_token": "malformed-token",
+            "client_id": oauth_client_app.client_id,
+            "client_secret": "wrong-secret",
+        },
+        format="json",
+        REMOTE_ADDR="203.0.113.50",
+    )
+
+    assert response.status_code == 401
+    assert response.data["error"] == "invalid_client"
+
+
+@override_settings(
+    MCP_OAUTH_TOKEN_IP_THROTTLE_RATE="100/min",
+    MCP_OAUTH_TOKEN_CLIENT_THROTTLE_RATE="100/min",
+    MCP_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT=5,
+)
+def test_invalid_refresh_token_returns_oauth_error_without_crashing(
+    api_client, oauth_client_app
+):
+    response = api_client.post(
+        TOKEN_URL,
+        {
+            "grant_type": "refresh_token",
+            "refresh_token": "malformed-token",
+            "client_id": oauth_client_app.client_id,
+            "client_secret": CLIENT_SECRET,
+        },
+        format="json",
+        REMOTE_ADDR="203.0.113.51",
+    )
+
+    assert response.status_code == 400
+    assert response.data["error"] == "invalid_grant"

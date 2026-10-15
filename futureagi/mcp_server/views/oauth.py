@@ -340,16 +340,16 @@ class MCPOAuthTokenView(APIView):
             )
 
         if grant_type == "authorization_code":
-            return self._handle_authorization_code(data)
+            return self._handle_authorization_code(request, data)
         elif grant_type == "refresh_token":
-            return self._handle_refresh_token(data)
+            return self._handle_refresh_token(request, data)
         else:
             return Response(
                 {"error": "unsupported_grant_type"},
                 status=400,
             )
 
-    def _handle_authorization_code(self, data):
+    def _handle_authorization_code(self, request, data):
         code = data.get("code")
         client_id = data.get("client_id")
         client_secret = data.get("client_secret")
@@ -467,7 +467,7 @@ class MCPOAuthTokenView(APIView):
             }
         )
 
-    def _handle_refresh_token(self, data):
+    def _handle_refresh_token(self, request, data):
         refresh_token = data.get("refresh_token")
         client_id = data.get("client_id")
         client_secret = data.get("client_secret")
