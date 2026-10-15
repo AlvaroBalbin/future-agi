@@ -19,7 +19,28 @@ type RelayConfig struct {
 	ChannelBufferSize int
 	PingInterval      time.Duration
 	PongTimeout       time.Duration
-	MaxMessageSize    int64
+	// IdleTimeout closes a side that sends neither a message nor a pong for this long.
+	// Zero means PingInterval+PongTimeout, which suits peers that answer pings while idle.
+	IdleTimeout    time.Duration
+	MaxMessageSize int64
+	// OnClientMessage, when set, sees every client message before it is relayed. It runs on the
+	// single client-reading goroutine, so it needs no locking of its own.
+	OnClientMessage func(messageType int, data []byte)
+}
+
+func (c RelayConfig) idleTimeout() time.Duration {
+	if c.IdleTimeout > 0 {
+		return c.IdleTimeout
+	}
+	return c.PingInterval + c.PongTimeout
+}
+
+// keepReading extends conn's read deadline now, and again on every pong.
+func (c RelayConfig) keepReading(conn *websocket.Conn) {
+	conn.SetReadDeadline(time.Now().Add(c.idleTimeout()))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(c.idleTimeout()))
+	})
 }
 
 // Relay bidirectionally forwards WebSocket messages between client and provider.
@@ -53,7 +74,30 @@ func (r *Relay) Start() {
 	go r.writeToProvider()
 	go r.readFromProvider()
 	go r.writeToClient()
+	if r.config.PingInterval > 0 {
+		go r.ping()
+	}
 	r.wg.Wait()
+}
+
+// ping keeps a quiet session alive: a pong extends the peer's read deadline, and the traffic
+// keeps intermediaries from dropping an idle connection.
+func (r *Relay) ping() {
+	ticker := time.NewTicker(r.config.PingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			deadline := time.Now().Add(r.config.PongTimeout)
+			for _, conn := range []*websocket.Conn{r.session.ClientConn, r.session.ProviderConn} {
+				if err := conn.WriteControl(websocket.PingMessage, nil, deadline); err != nil && !r.session.IsClosed() {
+					r.logger.Warn("ping failed", "session_id", r.session.ID, "error", err)
+				}
+			}
+		case <-r.session.StopChan():
+			return
+		}
+	}
 }
 
 func (r *Relay) readFromClient() {
@@ -61,11 +105,7 @@ func (r *Relay) readFromClient() {
 	defer close(r.clientToProvider)
 
 	r.session.ClientConn.SetReadLimit(r.config.MaxMessageSize)
-	r.session.ClientConn.SetPongHandler(func(string) error {
-		r.session.ClientConn.SetReadDeadline(time.Now().Add(r.config.PongTimeout + r.config.PingInterval))
-		return nil
-	})
-	r.session.ClientConn.SetReadDeadline(time.Now().Add(r.config.PongTimeout + r.config.PingInterval))
+	r.config.keepReading(r.session.ClientConn)
 
 	for {
 		messageType, data, err := r.session.ClientConn.ReadMessage()
@@ -78,7 +118,11 @@ func (r *Relay) readFromClient() {
 			r.session.Close("client_disconnected")
 			return
 		}
+		r.session.ClientConn.SetReadDeadline(time.Now().Add(r.config.idleTimeout()))
 		r.session.Usage.IncrementMessages()
+		if r.config.OnClientMessage != nil {
+			r.config.OnClientMessage(messageType, data)
+		}
 
 		select {
 		case r.clientToProvider <- relayMessage{messageType, data}:
@@ -120,11 +164,7 @@ func (r *Relay) readFromProvider() {
 	defer close(r.providerToClient)
 
 	r.session.ProviderConn.SetReadLimit(r.config.MaxMessageSize)
-	r.session.ProviderConn.SetPongHandler(func(string) error {
-		r.session.ProviderConn.SetReadDeadline(time.Now().Add(r.config.PongTimeout + r.config.PingInterval))
-		return nil
-	})
-	r.session.ProviderConn.SetReadDeadline(time.Now().Add(r.config.PongTimeout + r.config.PingInterval))
+	r.config.keepReading(r.session.ProviderConn)
 
 	for {
 		messageType, data, err := r.session.ProviderConn.ReadMessage()
@@ -137,6 +177,7 @@ func (r *Relay) readFromProvider() {
 			r.session.Close("provider_disconnected")
 			return
 		}
+		r.session.ProviderConn.SetReadDeadline(time.Now().Add(r.config.idleTimeout()))
 		r.session.Usage.IncrementMessages()
 
 		select {
