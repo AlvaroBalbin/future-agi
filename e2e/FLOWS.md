@@ -1313,6 +1313,27 @@
 - the actual trace and span list responses and API replays expose the minted span-target config and exactly {pass:0,fail:1}
 - trace-root and recursively located child detail rollups contain only the latest Fail and explanation; eval-cell click opens Evals and the expanded breakdown displays them
 
+### OBS-E2E-038 — a saved view opens its preset date on fresh dates, and Custom on its saved range
+
+**Goal:** A user who reopens a saved trace view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:99`  
+**Tags:** —
+
+**User steps:**
+
+1. send one trace now and one yesterday at noon so a project auto-creates
+2. save one trace view per preset and one Custom view, all storing a range from ~400 days ago
+3. open the project trace list
+4. click each saved view tab in turn
+
+**Backend state verified:**
+
+- both traces have all their spans in ClickHouse spans (FINAL)
+- each preset view sends every trace-list request with the preset window as of now, never the stored one, and the URL date param is rewritten to it
+- Today lists only the today trace, Yesterday only the yesterday trace, and 7D–12M exactly both
+- the Custom view sends and keeps its stored range verbatim and lists neither trace
+- opening the views writes nothing back: every tracer_saved_view row in PG still holds its stored range
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle
