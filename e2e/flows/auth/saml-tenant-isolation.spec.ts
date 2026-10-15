@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import type { APIRequestContext, BrowserContext, Page, Request } from '@playwright/test';
+import type { APIRequestContext, BrowserContext, Page, Request, Response } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -24,6 +24,8 @@ const pendingReceipts: Promise<void>[] = [];
 
 interface RequestReceipt {
   flow: string;
+  // Test-process clock when the request was sent; orders it against responses.
+  at: number;
   method: string;
   path: string;
   cookieNames: string[];
@@ -44,6 +46,7 @@ function recordRequests(page: Page, flow: string): void {
   page.on('request', (request: Request) => {
     const url = new URL(request.url());
     if (!SAML_PATHS.has(url.pathname)) return;
+    const at = Date.now();
     // headers() leaves out Cookie; allHeaders() has the cookies the browser
     // actually sent, which is what the binder checks are about.
     pendingReceipts.push(request.allHeaders().then(headers => {
@@ -55,6 +58,7 @@ function recordRequests(page: Page, flow: string): void {
       const authorization = headers.authorization;
       receipts.push({
         flow,
+        at,
         method: request.method(),
         path: url.pathname,
         cookieNames,
@@ -132,39 +136,32 @@ async function initiate(page: Page, email: string, next = '/dashboard/develop'):
   }, { apiUrl: E2E.apiUrl, userEmail: email, nextPath: next });
 }
 
+// The IdP page auto-posts to the ACS, which redirects to /complete/. Register
+// before navigating to the IdP, or a fast round trip finishes unobserved.
+// `at` is when the completion response arrived, on the receipts' clock.
+async function waitForCompletion(page: Page): Promise<{ response: Response; at: number }> {
+  let at = 0;
+  const response = await page.waitForResponse(response => {
+    const matched = new URL(response.url()).pathname === '/saml2_auth/complete/'
+      && response.status() === 302;
+    if (matched) at = Date.now();
+    return matched;
+  }, { timeout: UI_READY });
+  return { response, at };
+}
+
 async function completeBrowserLogin(
   page: Page,
   idp: LocalSamlIdp,
   email: string,
   next = '/dashboard/develop',
-  useSsoPage = false,
 ): Promise<string> {
   await page.goto('/auth/jwt/login', { waitUntil: 'domcontentloaded' });
   await idp.setIdentity(email);
-  let idpUrl: string;
-  if (useSsoPage) {
-    await page.getByRole('button', { name: 'Continue with SSO/SAML', exact: true }).click();
-    await page.getByLabel(/email/i).fill(email);
-    const initiation = page.waitForResponse(response => {
-      const url = new URL(response.url());
-      return url.pathname === '/saml2_auth/idp-login/' && response.status() === 200;
-    }, { timeout: UI_READY });
-    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-    await initiation;
-    await page.waitForURL(url => url.hostname === '127.0.0.1', { timeout: UI_READY });
-    idpUrl = page.url();
-  } else {
-    idpUrl = await initiate(page, email, next);
-    expect(new URL(idpUrl).hostname).toBe('127.0.0.1');
-    await page.goto(idpUrl, { waitUntil: 'domcontentloaded' });
-  }
-  const completion = page.waitForResponse(response => {
-    const url = new URL(response.url());
-    return url.pathname === '/saml2_auth/complete/' && response.status() === 302;
-  }, { timeout: UI_READY });
-  if (page.url() !== idpUrl) {
-    await page.goto(idpUrl, { waitUntil: 'domcontentloaded' });
-  }
+  const idpUrl = await initiate(page, email, next);
+  expect(new URL(idpUrl).hostname).toBe('127.0.0.1');
+  const completion = waitForCompletion(page);
+  await page.goto(idpUrl, { waitUntil: 'domcontentloaded' });
   await completion;
   await expect.poll(() => page.url(), { timeout: UI_READY }).toMatch(/\/dashboard\//);
   await expect.poll(() => new URL(page.url()).search, { timeout: UI_READY }).toBe('');
@@ -210,10 +207,13 @@ test.describe('SAML tenant isolation', () => {
       expect(rows).toEqual([{
         auth_origin: 'saml', scoped_organization_id: actor.organizationId, state: 'consumed',
       }]);
-      const flowReceipts = (await settledReceipts()).filter(receipt => receipt.flow === 'SAML-E2E-001');
-      expect(flowReceipts.map(receipt => receipt.path)).toEqual(
+      // The dashboard asks for user-info after the barrier has stripped the URL.
+      await expect.poll(async () => (await settledReceipts())
+        .filter(receipt => receipt.flow === 'SAML-E2E-001')
+        .map(receipt => receipt.path), { timeout: UI_READY }).toEqual(
         expect.arrayContaining(['/saml2_auth/acs/', '/saml2_auth/complete/', '/accounts/user-info/']),
       );
+      const flowReceipts = (await settledReceipts()).filter(receipt => receipt.flow === 'SAML-E2E-001');
       const secretValues = flowReceipts.flatMap(receipt =>
         [receipt.cookieHeader, receipt.authorizationValue].filter(
           (value): value is string => Boolean(value),
@@ -256,25 +256,26 @@ test.describe('SAML tenant isolation', () => {
         new URL(response.url()).pathname === '/saml2_auth/acs/' && response.request().method() === 'POST',
         { timeout: UI_READY },
       );
+      // Y follows the ACS redirect to /complete/ itself and, holding no binder
+      // cookie, is denied there. Listen before Y reaches the IdP.
+      const yCompletion = waitForCompletion(pageY);
       await pageY.goto(idpUrl, { waitUntil: 'domcontentloaded' });
       const candidate = new URL((await acsResponse).headers().location, E2E.apiUrl).searchParams.get('c');
       expect(candidate).toBeTruthy();
-      const [attempt] = await probe.pg<{ id: string }>(
-        'SELECT attempt_id AS id FROM saml_response_candidate WHERE candidate_key = $1',
+      const yLanding = new URL((await yCompletion).response.headers().location);
+      expect(`${yLanding.origin}${yLanding.pathname}`).toBe(`${E2E.appUrl}/auth/jwt/login`);
+      expect(yLanding.searchParams.get('denied')).toBe('true');
+      const [attempt] = await probe.pg<{ id: string; state: string }>(
+        `SELECT a.id, a.state FROM saml_response_candidate c
+         JOIN saml_login_attempt a ON a.id = c.attempt_id WHERE c.candidate_key = $1`,
         [candidate],
       );
-      expect(attempt?.id).toBeTruthy();
+      expect(attempt?.state).toBe('pending');
       expect(await probe.pg<{ id: string }>(
         `SELECT t.id FROM accounts_auth_token t JOIN accounts_user u ON u.id = t.user_id
          WHERE u.email = $1 AND t.auth_origin = 'saml'`, [actor.email],
       )).toEqual([]);
 
-      const denied = pageY.waitForURL(
-        url => url.origin === E2E.appUrl && url.pathname === '/auth/jwt/login' && url.searchParams.get('denied') === 'true',
-        { timeout: UI_READY },
-      );
-      await pageY.goto(`${E2E.apiUrl}/saml2_auth/complete/?c=${candidate}`, { waitUntil: 'domcontentloaded' });
-      await denied;
       await pageX.goto(`${E2E.apiUrl}/saml2_auth/complete/?c=${candidate}`, { waitUntil: 'domcontentloaded' });
       await expect(pageX).toHaveURL(/\/dashboard\//, { timeout: UI_READY });
       expect(await probe.pg<{ id: string; state: string }>(
@@ -399,19 +400,28 @@ test.describe('SAML tenant isolation', () => {
       recordRequests(page, 'SAML-E2E-006');
       await idp.setIdentity(samlActor.email);
       const idpUrl = await initiate(page, samlActor.email);
-      const callback = page.waitForURL(
-        url => url.origin === E2E.appUrl && url.pathname.startsWith('/dashboard/'),
-        { timeout: UI_READY },
-      );
+      // The tab already shows /dashboard/develop under the password session,
+      // so a dashboard URL wait would resolve at once; anchor on completion.
+      const completion = waitForCompletion(page);
       await page.goto(idpUrl, { waitUntil: 'domcontentloaded' });
-      await callback;
+      // Requests before this instant belong to the password session's own boot.
+      const { at: completedAt } = await completion;
+      await expect.poll(() => {
+        const { origin, pathname, search } = new URL(page.url());
+        return { origin, pathname, search };
+      }, { timeout: UI_READY }).toMatchObject({
+        origin: E2E.appUrl, pathname: expect.stringMatching(/^\/dashboard\//), search: '',
+      });
       const samlToken = await page.evaluate(() => localStorage.getItem('accessToken') ?? '');
-      await expect.poll(() => receipts.filter(receipt =>
-        receipt.flow === 'SAML-E2E-006' && receipt.path === '/accounts/user-info/',
-      ).length, { timeout: UI_READY }).toBeGreaterThan(0);
-      const firstUserInfo = receipts.find(receipt =>
-        receipt.flow === 'SAML-E2E-006' && receipt.path === '/accounts/user-info/',
-      );
+      expect(samlToken).not.toBe('');
+      expect(samlToken).not.toBe(passwordActor.tokens.access);
+      const isSamlUserInfo = (receipt: RequestReceipt) => receipt.flow === 'SAML-E2E-006'
+        && receipt.path === '/accounts/user-info/' && receipt.at >= completedAt;
+      await expect.poll(async () => (await settledReceipts()).filter(isSamlUserInfo).length,
+        { timeout: UI_READY }).toBeGreaterThan(0);
+      const firstUserInfo = (await settledReceipts())
+        .filter(isSamlUserInfo)
+        .sort((a, b) => a.at - b.at)[0];
       expect(firstUserInfo).toMatchObject({
         authorizationPrefix: 'Bearer', hasOrganizationHeader: false, hasWorkspaceHeader: false,
         authorizationValue: samlToken,
