@@ -137889,6 +137889,7 @@
                 "results",
                 "groups",
                 "facets",
+                "status_counts",
                 "evaluation_columns"
             ],
             "type": "object",
@@ -137929,6 +137930,9 @@
                 },
                 "facets": {
                     "$ref": "#/definitions/RunFacets"
+                },
+                "status_counts": {
+                    "$ref": "#/definitions/OutcomeCounts"
                 },
                 "evaluation_columns": {
                     "type": "array",

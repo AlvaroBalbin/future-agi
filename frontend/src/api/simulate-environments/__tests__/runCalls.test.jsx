@@ -456,11 +456,33 @@ describe("useRunCalls", () => {
       count: 0,
       groups: [],
       facets: {},
+      statusCounts: {},
       summary: null,
       totalPages: 1,
       isLoading: true,
     });
     unmount();
+  });
+
+  it("carries the server's status counts for the status chips", async () => {
+    axios.get.mockResolvedValue({
+      data: { ...payload(), status_counts: { passed: 2, failed: 1 } },
+    });
+    const { result } = renderHook(() => useRunCalls("ex-counts"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.statusCounts).toEqual({ passed: 2, failed: 1 });
+  });
+
+  it("has no status counts when the response carries none", async () => {
+    const { result } = renderHook(() => useRunCalls("ex-no-counts"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.statusCounts).toEqual({});
   });
 
   it("carries the run's agent type from the execution", async () => {
