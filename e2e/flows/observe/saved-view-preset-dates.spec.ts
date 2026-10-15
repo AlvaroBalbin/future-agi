@@ -17,6 +17,11 @@ const SAVED_VIEWS_PATH = '/tracer/saved-views/';
 // { project_id, page_size, filters: JSON.stringify([...filters, created_at]) }.
 const TRACE_LIST_PATH = '/tracer/trace/list_traces_of_session/';
 const SPAN_LIST_PATH = '/tracer/observation-span/list_spans_observe/';
+// The Sessions and Users lists (axios.js projectSessionList / getUsersList).
+// Read aliases: POST with the same fields as the GET query when the contract
+// allows it, so both shapes are read below.
+const SESSION_LIST_PATH = '/tracer/trace-session/list_sessions/';
+const USER_LIST_PATH = '/tracer/users/';
 // The trace graph endpoint (axios.js getTraceGraphData); the compare graph is
 // the one place the compare date is sent. Body captured with page.on('request'):
 // { project_id, interval, property, req_data_config, filters: [...] }.
@@ -100,10 +105,16 @@ async function presetWindows(page: Page): Promise<Record<Preset, Window>> {
   }) as Promise<Record<Preset, Window>>;
 }
 
-// The created_at window a list or graph request carries. List bodies send
+// A read request's fields, from the POST body or the GET query.
+const wire = (r: Request): Record<string, unknown> =>
+  r.method() === 'POST'
+    ? ((r.postDataJSON() as Record<string, unknown> | null) ?? {})
+    : Object.fromEntries(new URL(r.url()).searchParams);
+
+// The created_at window a list or graph request carries. List requests send
 // filters as a JSON string, graph bodies as an array.
 const requestWindow = (r: Request): string[] | null => {
-  const raw = (r.postDataJSON() as { filters?: unknown } | null)?.filters ?? [];
+  const raw = wire(r).filters ?? [];
   const filters = (typeof raw === 'string' ? JSON.parse(raw) : raw) as Array<{
     column_id: string;
     filter_config: { filter_value: string[] };
@@ -111,13 +122,13 @@ const requestWindow = (r: Request): string[] | null => {
   return filters.find((f) => f.column_id === 'created_at')?.filter_config.filter_value ?? null;
 };
 
-// Collects every POST to `path` for one project, so a step can require that
+// Collects every read of `path` for one project, so a step can require that
 // none of them went out with the stored window.
 const captureRequests = (page: Page, path: string, projectId: string) => {
   const captured: Request[] = [];
   page.on('request', (r) => {
-    if (r.method() === 'POST' && r.url().includes(path)
-        && (r.postDataJSON() as { project_id?: string } | null)?.project_id === projectId) {
+    if ((r.method() === 'POST' || r.method() === 'GET')
+        && new URL(r.url()).pathname === path && wire(r).project_id === projectId) {
       captured.push(r);
     }
   });
@@ -137,17 +148,39 @@ const urlDateFilter = (page: Page, key: string): DateFilter | null => {
 
 // Real rows carry row-id; AG Grid's hidden loading stub (.ag-row-loading,
 // text "ERR") does not. Sorted, so rows sharing a timestamp compare as a set.
-const gridColumn = (page: Page, colId: string) =>
-  page.locator(`.clean-data-table:visible .ag-row[row-id] [col-id="${colId}"]`)
-    .evaluateAll((cells) => cells.map((c) => (c.textContent ?? '').trim()).sort());
+// With no column, the rows are read by their row-id.
+const gridRows = (page: Page, colId: string | null) =>
+  colId === null
+    ? page.locator('.clean-data-table:visible .ag-row[row-id]')
+      .evaluateAll((rows) => rows.map((r) => r.getAttribute('row-id') ?? '').sort())
+    : page.locator(`.clean-data-table:visible .ag-row[row-id] [col-id="${colId}"]`)
+      .evaluateAll((cells) => cells.map((c) => (c.textContent ?? '').trim()).sort());
 
 type Seeded = {
   projectId: string; today: SeededTrace; yesterday: SeededTrace;
-  names: { todayRoot: string; todayChild: string; yesterdayRoot: string; yesterdayChild: string };
+  // The curated session ids, which the Sessions grid uses as row-id; the
+  // session cell's text can still show the id before the name resolves.
+  sessionIds: { today: string; yesterday: string };
+  names: {
+    todayRoot: string; todayChild: string; yesterdayRoot: string; yesterdayChild: string;
+    todaySession: string; yesterdaySession: string; todayUser: string; yesterdayUser: string;
+  };
 };
 
-// One trace now and one yesterday at local noon, in a project of its own, so
-// Today, Yesterday and the rolling presets each select a distinct set.
+// One trace now and one yesterday at local noon, in a project of its own, each
+// in its own session and from its own user, so Today, Yesterday and the
+// rolling presets each select a distinct set of traces, spans, sessions and users.
+// Session and user identity, set the way catalog-user-parity.spec.ts does: on
+// both spans, with the observe project type the converter reads users under.
+const identity = (session: string, user: string) => {
+  const attributes = { 'session.id': session, 'user.id': user };
+  return {
+    resourceAttributes: { project_type: 'observe' },
+    rootAttributes: attributes,
+    childAttributes: { ...attributes, 'fi.span.kind': 'llm' },
+  };
+};
+
 async function seedTwoDays(
   actor: TestActor, probe: StateProbe, req: APIRequestContext, suffix: string,
 ): Promise<Seeded> {
@@ -155,6 +188,8 @@ async function seedTwoDays(
   const names = {
     todayRoot: `e2e.svd-today-${suffix}`, todayChild: `e2e.svd-today-llm-${suffix}`,
     yesterdayRoot: `e2e.svd-yesterday-${suffix}`, yesterdayChild: `e2e.svd-yesterday-llm-${suffix}`,
+    todaySession: `e2e-svd-session-today-${suffix}`, yesterdaySession: `e2e-svd-session-yesterday-${suffix}`,
+    todayUser: `e2e-svd-user-today-${suffix}`, yesterdayUser: `e2e-svd-user-yesterday-${suffix}`,
   };
   const yesterdayNoon = new Date();
   yesterdayNoon.setDate(yesterdayNoon.getDate() - 1);
@@ -164,10 +199,12 @@ async function seedTwoDays(
   const today = await sendTrace(req, {
     collectorUrl: E2E.collectorUrl, apiKey: actor.apiKey, secretKey: actor.secretKey,
     projectName, rootName: names.todayRoot, childName: names.todayChild,
+    ...identity(names.todaySession, names.todayUser),
   });
   const yesterday = await sendTrace(req, {
     collectorUrl: E2E.collectorUrl, apiKey: actor.apiKey, secretKey: actor.secretKey,
     projectName, rootName: names.yesterdayRoot, childName: names.yesterdayChild,
+    ...identity(names.yesterdaySession, names.yesterdayUser),
     startTimeUnixNano: yesterdayNs, endTimeUnixNano: yesterdayNs + 50_000_000n,
   });
   for (const t of [today, yesterday]) {
@@ -178,15 +215,26 @@ async function seedTwoDays(
       return Number(rows[0].n);
     }, POLL.SPAN_VISIBLE).toBe(t.spanIds.length);
   }
+  const sessionOf = async (t: SeededTrace) => {
+    const rows = await probe.ch<{ s: string }>(
+      'SELECT DISTINCT toString(trace_session_id) AS s FROM spans FINAL WHERE trace_id = {t:String} AND trace_session_id IS NOT NULL',
+      { t: t.traceId });
+    return rows.map((r) => r.s);
+  };
+  const sessionIds = { today: '', yesterday: '' };
+  for (const [key, t] of [['today', today], ['yesterday', yesterday]] as const) {
+    await expect.poll(() => sessionOf(t), POLL.SPAN_VISIBLE).toHaveLength(1);
+    sessionIds[key] = (await sessionOf(t))[0];
+  }
   const projects = await probe.pg<{ id: string }>(
     'SELECT id FROM tracer_project WHERE name = $1 AND organization_id = $2',
     [projectName, actor.organizationId]);
   expect(projects).toHaveLength(1);
-  return { projectId: projects[0].id, today, yesterday, names };
+  return { projectId: projects[0].id, today, yesterday, names, sessionIds };
 }
 
 async function createViews(
-  actor: TestActor, projectId: string, tabType: 'traces' | 'spans', label: string,
+  actor: TestActor, projectId: string, tabType: 'traces' | 'spans' | 'sessions' | 'users', label: string,
   suffix: string, config: (option: Option) => Record<string, unknown>,
 ): Promise<View[]> {
   const views: View[] = [];
@@ -214,12 +262,23 @@ async function expectStoredUnchanged(
   }
 }
 
+// Opens a list on its default tab and waits for its first load, so that load
+// cannot land after a saved view's tab is clicked and be mistaken for it.
+async function openDefaultList(page: Page, url: string, listPath: string, firstView: string) {
+  const firstLoad = page.waitForResponse((r) =>
+    new URL(r.url()).pathname === listPath && r.request().method() !== 'OPTIONS',
+    { timeout: UI_READY });
+  await page.goto(url, { waitUntil: 'domcontentloaded' });
+  await firstLoad;
+  await expect(viewTab(page, firstView)).toBeVisible({ timeout: UI_READY });
+}
+
 // One preset or Custom view opened from the tab bar: the URL date param and
 // every list request carry the preset as of now (or the stored Custom range),
 // and the grid lists exactly the rows that window selects.
 async function openListView(page: Page, opts: {
   view: View; dateKey: string; stored: string[]; requests: Request[];
-  listPath: string; colId: string; rows: Record<Option, string[]>;
+  listPath: string; colId: string | null; rows: Record<Option, string[]>;
 }) {
   const { view, dateKey, stored, requests, listPath, colId, rows } = opts;
   // A UTC-hour or midnight boundary can pass between computing the
@@ -227,7 +286,8 @@ async function openListView(page: Page, opts: {
   const before = await presetWindows(page);
   requests.length = 0;
   const response = page.waitForResponse((r) =>
-    r.url().includes(listPath) && r.request().method() === 'POST', { timeout: UI_READY });
+    new URL(r.url()).pathname === listPath && r.request().method() !== 'OPTIONS',
+    { timeout: UI_READY });
   await viewTab(page, view.name).click();
   await response;
   const after = await presetWindows(page);
@@ -250,7 +310,7 @@ async function openListView(page: Page, opts: {
         .toContainEqual(requestWindow(r));
     }
   }
-  await expect.poll(() => gridColumn(page, colId), { timeout: UI_READY })
+  await expect.poll(() => gridRows(page, colId), { timeout: UI_READY })
     .toEqual([...rows[view.option]].sort());
 }
 
@@ -293,9 +353,8 @@ test('OBS-E2E-038: a saved view opens its preset date on fresh dates, and Custom
   const requests = captureRequests(page, TRACE_LIST_PATH, seeded.projectId);
 
   await test.step('open the project trace list', async () => {
-    await page.goto(`/dashboard/observe/${seeded.projectId}/llm-tracing?tab=traces`,
-      { waitUntil: 'domcontentloaded' });
-    await expect(viewTab(page, views[0].name)).toBeVisible({ timeout: UI_READY });
+    await openDefaultList(page, `/dashboard/observe/${seeded.projectId}/llm-tracing?tab=traces`,
+      TRACE_LIST_PATH, views[0].name);
   });
   for (const view of views) {
     await test.step(`${view.option}: open the saved view`, () => openListView(page, {
@@ -347,9 +406,9 @@ test('OBS-E2E-039: a saved span view opens its preset date on fresh dates, and C
   const requests = captureRequests(page, SPAN_LIST_PATH, seeded.projectId);
 
   await test.step('open the project span list', async () => {
-    await page.goto(`/dashboard/observe/${seeded.projectId}/llm-tracing?tab=traces&selectedTab=spans`,
-      { waitUntil: 'domcontentloaded' });
-    await expect(viewTab(page, views[0].name)).toBeVisible({ timeout: UI_READY });
+    await openDefaultList(page,
+      `/dashboard/observe/${seeded.projectId}/llm-tracing?tab=traces&selectedTab=spans`,
+      SPAN_LIST_PATH, views[0].name);
   });
   for (const view of views) {
     await test.step(`${view.option}: open the saved view`, () => openListView(page, {
@@ -441,6 +500,78 @@ test('OBS-E2E-040: a saved compare view opens its compare preset date on fresh d
       (v) => ({ dateFilter: stored, dateOption: v.option })));
   await req.dispose();
 });
+
+for (const surface of [
+  {
+    id: 'OBS-E2E-041', tabType: 'sessions', label: 'ses', noun: 'session',
+    route: 'sessions', dateKey: 'sessionDateFilter', listPath: SESSION_LIST_PATH,
+    colId: null, today: 'today', yesterday: 'yesterday',
+  },
+  {
+    id: 'OBS-E2E-042', tabType: 'users', label: 'usr', noun: 'user',
+    route: 'users', dateKey: 'userDateFilter', listPath: USER_LIST_PATH,
+    colId: 'user_id', today: 'todayUser', yesterday: 'yesterdayUser',
+  },
+] as const) {
+  test(`${surface.id}: a saved ${surface.noun} view opens its preset date on fresh dates, and Custom on its saved range`, {
+    tag: ['@flow'],
+    annotation: flowAnnotation({
+      id: surface.id, area: 'observe',
+      userGoal: `A user who reopens a saved ${surface.noun} view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with`,
+      steps: [`send one trace now and one yesterday at noon, each with its own ${surface.noun}, so a project auto-creates`,
+              `save one ${surface.noun} view per preset and one Custom view, all storing a range from ~400 days ago`,
+              `open the project ${surface.noun} list`,
+              'click each saved view tab in turn'],
+      backendChecks: ['both traces have all their spans in ClickHouse spans (FINAL)',
+                      `each preset view sends every ${surface.noun}-list request with the preset window as of now, never the stored one, and the URL date param is rewritten to it`,
+                      `Today lists only the today ${surface.noun}, Yesterday only the yesterday ${surface.noun}, and 7D–12M exactly both`,
+                      `the Custom view sends and keeps its stored range verbatim and lists neither ${surface.noun}`,
+                      'opening the views writes nothing back: every tracer_saved_view row in PG still holds its stored range'],
+    }),
+  }, async ({ page, actor, probe }, testInfo) => {
+    // Same budget as OBS-E2E-038: SPAN_VISIBLE + 9 × UI_READY + headroom.
+    test.setTimeout(600_000);
+    const req = await request.newContext();
+    const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
+    const stored = staleRange(400);
+    const seeded = await test.step('seed a trace now and one yesterday at noon',
+      () => seedTwoDays(actor, probe, req, suffix));
+    // Sessions-view.jsx / UsersView.jsx getConfig: { display: { …, dateFilter }, extra_filters }.
+    const views = await createViews(actor, seeded.projectId, surface.tabType, surface.label, suffix,
+      (option) => ({
+        display: { dateFilter: { dateFilter: stored, dateOption: option } },
+        extra_filters: [],
+      }));
+    await attachSeeded(testInfo, { ...seeded, stored, views });
+
+    // Sessions by curated id (row-id), users by the user.id the grid shows.
+    const today = surface.colId === null
+      ? seeded.sessionIds[surface.today] : seeded.names[surface.today];
+    const yesterday = surface.colId === null
+      ? seeded.sessionIds[surface.yesterday] : seeded.names[surface.yesterday];
+    const both = [today, yesterday];
+    const rows: Record<Option, string[]> = {
+      Today: [today], Yesterday: [yesterday],
+      '7D': both, '30D': both, '3M': both, '6M': both, '12M': both, Custom: [],
+    };
+    const requests = captureRequests(page, surface.listPath, seeded.projectId);
+
+    await test.step(`open the project ${surface.noun} list`, async () => {
+      await openDefaultList(page, `/dashboard/observe/${seeded.projectId}/${surface.route}`,
+        surface.listPath, views[0].name);
+    });
+    for (const view of views) {
+      await test.step(`${view.option}: open the saved view`, () => openListView(page, {
+        view, dateKey: surface.dateKey, stored, requests,
+        listPath: surface.listPath, colId: surface.colId, rows,
+      }));
+    }
+    await test.step('storage: opening the views wrote nothing back', () =>
+      expectStoredUnchanged(probe, views, "->'display'->'dateFilter'",
+        (v) => ({ dateFilter: stored, dateOption: v.option })));
+    await req.dispose();
+  });
+}
 
 async function attachSeeded(testInfo: TestInfo, body: Record<string, unknown>) {
   await testInfo.attach('seeded', {

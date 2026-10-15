@@ -1316,7 +1316,7 @@
 ### OBS-E2E-038 — a saved view opens its preset date on fresh dates, and Custom on its saved range
 
 **Goal:** A user who reopens a saved trace view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:257`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:317`  
 **Tags:** —
 
 **User steps:**
@@ -1337,7 +1337,7 @@
 ### OBS-E2E-039 — a saved span view opens its preset date on fresh dates, and Custom on its saved range
 
 **Goal:** A user who reopens a saved span view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:312`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:371`  
 **Tags:** —
 
 **User steps:**
@@ -1358,7 +1358,7 @@
 ### OBS-E2E-040 — a saved compare view opens its compare preset date on fresh dates, and a Custom compare range as saved
 
 **Goal:** A user who reopens a saved trace view in compare mode days later sees its compare preset (Today, Yesterday, 7D…12M) as of now, while a Custom compare range stays exactly as saved  
-**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:366`  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:425`  
 **Tags:** —
 
 **User steps:**
@@ -1374,6 +1374,48 @@
 - each compare preset view sends the compare graph request with the preset window as of now and no graph request with the stored compare window, and the URL compare date param is rewritten to it
 - the Custom compare view keeps its stored compare range in the URL and sends a graph request with it
 - opening the views writes nothing back: every tracer_saved_view row in PG still holds its stored compare range
+
+### OBS-E2E-041 — a saved session view opens its preset date on fresh dates, and Custom on its saved range
+
+**Goal:** A user who reopens a saved session view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:516`  
+**Tags:** —
+
+**User steps:**
+
+1. send one trace now and one yesterday at noon, each with its own session, so a project auto-creates
+2. save one session view per preset and one Custom view, all storing a range from ~400 days ago
+3. open the project session list
+4. click each saved view tab in turn
+
+**Backend state verified:**
+
+- both traces have all their spans in ClickHouse spans (FINAL)
+- each preset view sends every session-list request with the preset window as of now, never the stored one, and the URL date param is rewritten to it
+- Today lists only the today session, Yesterday only the yesterday session, and 7D–12M exactly both
+- the Custom view sends and keeps its stored range verbatim and lists neither session
+- opening the views writes nothing back: every tracer_saved_view row in PG still holds its stored range
+
+### OBS-E2E-042 — a saved user view opens its preset date on fresh dates, and Custom on its saved range
+
+**Goal:** A user who reopens a saved user view set to a preset date (Today, Yesterday, 7D…12M) days later sees that preset as of now, while a Custom view keeps the exact range it was saved with  
+**Spec:** `flows/observe/saved-view-preset-dates.spec.ts:516`  
+**Tags:** —
+
+**User steps:**
+
+1. send one trace now and one yesterday at noon, each with its own user, so a project auto-creates
+2. save one user view per preset and one Custom view, all storing a range from ~400 days ago
+3. open the project user list
+4. click each saved view tab in turn
+
+**Backend state verified:**
+
+- both traces have all their spans in ClickHouse spans (FINAL)
+- each preset view sends every user-list request with the preset window as of now, never the stored one, and the URL date param is rewritten to it
+- Today lists only the today user, Yesterday only the yesterday user, and 7D–12M exactly both
+- the Custom view sends and keeps its stored range verbatim and lists neither user
+- opening the views writes nothing back: every tracer_saved_view row in PG still holds its stored range
 
 ## prompts
 
