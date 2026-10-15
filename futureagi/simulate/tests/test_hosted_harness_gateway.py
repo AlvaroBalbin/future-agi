@@ -1845,14 +1845,13 @@ def test_a_fresh_build_runs_the_staged_pipeline_when_the_builder_session_is_off(
     simulator_values = {
         "ALK_HARNESS": "vertex-gemini",
         "ALK_HARNESS_MODEL": "gemini-3.7-flash",
+        "AGENTCC_BASE_URL": "https://gateway.example.test",
+        "AGENTCC_API_KEY": "harness-virtual-key",
         "DEEPGRAM_API_KEY": "platform-simulator-deepgram",
-        "GOOGLE_APPLICATION_CREDENTIALS": _SIMULATOR_VERTEX_CREDENTIALS_PATH,
-        "GOOGLE_CLOUD_PROJECT": "platform-simulator-project",
-        "GOOGLE_CLOUD_LOCATION": "global",
     }
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
-        lambda: (simulator_values, b'{"project_id":"platform-simulator-project"}'),
+        lambda: simulator_values,
     )
 
     selected_capacity = SandboxCapacity("selected", 6, 12_288, 20, 1)
