@@ -6,6 +6,7 @@ import pytest
 from django.db import transaction
 
 from accounts.models import Organization, User
+from agentic_eval.core.database import ch_vector
 from agentic_eval.core.embeddings import embedding_manager
 from conftest import _open_ch_test_native_client
 from model_hub.models.evals_metric import EvalTemplate, Feedback
@@ -47,6 +48,20 @@ def vector_manager(monkeypatch):
     database = f"test_feedback_lifecycle_{uuid.uuid4().hex}"
     admin = _open_ch_test_native_client(owned_database=database)
     admin.execute(f"CREATE DATABASE {database}")
+    # ClickHouseVectorDB connects with get_clickhouse_client_kwargs(), whose
+    # env defaults (clickhouse:9000) CI does not set. Give every vector client
+    # the sidecar target the guard just proved for the admin client.
+    host, port = admin.connection.hosts[0]
+    client_kwargs = {
+        "host": host,
+        "port": port,
+        "user": admin.connection.user,
+        "password": admin.connection.password,
+        "database": database,
+    }
+    monkeypatch.setattr(
+        ch_vector, "get_clickhouse_client_kwargs", lambda: dict(client_kwargs)
+    )
     monkeypatch.setenv("CH_DATABASE", database)
     monkeypatch.setattr(
         embedding_manager,
