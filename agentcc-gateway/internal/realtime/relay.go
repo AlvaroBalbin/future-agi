@@ -3,6 +3,7 @@ package realtime
 import (
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -51,6 +52,9 @@ type Relay struct {
 	config           RelayConfig
 	logger           *slog.Logger
 	wg               sync.WaitGroup
+	// providerClosed is set once the provider's side has ended; from then on writeToClient
+	// delivers what is still queued and ends the session.
+	providerClosed atomic.Bool
 }
 
 // NewRelay creates a new message relay.
@@ -147,6 +151,11 @@ func (r *Relay) writeToProvider() {
 			}
 			r.session.ProviderConn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := r.session.ProviderConn.WriteMessage(msg.messageType, msg.data); err != nil {
+				// A message written after the provider closed must not cut short the delivery of
+				// what the provider sent before closing; writeToClient ends the session.
+				if r.providerClosed.Load() {
+					return
+				}
 				if !r.session.IsClosed() {
 					r.logger.Warn("provider write error", "session_id", r.session.ID, "error", err)
 				}
@@ -174,7 +183,9 @@ func (r *Relay) readFromProvider() {
 			} else if !r.session.IsClosed() {
 				r.logger.Warn("provider read error", "session_id", r.session.ID, "error", err)
 			}
-			r.session.Close("provider_disconnected")
+			// Speech vendors send their final results right before closing, so the session ends
+			// only after writeToClient has delivered everything queued.
+			r.providerClosed.Store(true)
 			return
 		}
 		r.session.ProviderConn.SetReadDeadline(time.Now().Add(r.config.idleTimeout()))
@@ -195,9 +206,7 @@ func (r *Relay) writeToClient() {
 		select {
 		case msg, ok := <-r.providerToClient:
 			if !ok {
-				r.session.ClientConn.WriteControl(websocket.CloseMessage,
-					websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
-					time.Now().Add(2*time.Second))
+				r.session.Close("provider_disconnected")
 				return
 			}
 			r.session.ClientConn.SetWriteDeadline(time.Now().Add(10 * time.Second))
