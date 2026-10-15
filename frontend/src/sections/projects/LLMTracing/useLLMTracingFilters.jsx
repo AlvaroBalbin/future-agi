@@ -28,13 +28,16 @@ export const useLLMTracingFilters = (
   // A preset in the URL (from a saved view, a shared link or a reload on a
   // later day) still carries the dates it resolved to back then. Query fresh
   // dates from the first render, and write them back so the URL shows them.
+  // The default isn't in the URL, so re-resolving it must not add it there.
   const dateFilter = useMemo(
     () => resolvePresetDateFilter(rawDateFilter),
     [rawDateFilter],
   );
   useEffect(() => {
-    if (dateFilter !== rawDateFilter) setDateFilter(dateFilter);
-  }, [dateFilter, rawDateFilter, setDateFilter]);
+    if (dateFilter !== rawDateFilter && rawDateFilter !== defaultDateFilter) {
+      setDateFilter(dateFilter);
+    }
+  }, [dateFilter, rawDateFilter, defaultDateFilter, setDateFilter]);
 
   const reverseEvalColumnIds = useMemo(() => {
     return columns.filter((c) => c?.reverseOutput).map((c) => c.id);

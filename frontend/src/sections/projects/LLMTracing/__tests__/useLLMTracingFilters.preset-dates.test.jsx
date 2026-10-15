@@ -114,6 +114,29 @@ describe("useLLMTracingFilters preset dates (TH-8634)", () => {
     expect(urlDate()).toBeNull();
   });
 
+  it("keeps the URL clean when a page's default was computed before the day changed", async () => {
+    window.history.replaceState({}, "", "/test");
+    const yesterdaysDefault = {
+      dateFilter: ["2026-10-14 00:00:00", "2026-10-15 00:00:00"],
+      dateOption: "Today",
+    };
+    const { result } = renderHook(
+      () =>
+        useLLMTracingFilters(
+          NO_COLUMNS,
+          yesterdaysDefault,
+          "primaryTraceFilter",
+          "primaryTraceDateFilter",
+          NO_COLUMNS,
+          noExtraProperties,
+        ),
+      { wrapper },
+    );
+    await act(async () => {});
+    expect(result.current.dateFilter).toEqual(FRESH_TODAY);
+    expect(urlDate()).toBeNull();
+  });
+
   it("fills in dates for a preset link without any", async () => {
     const { result } = openWithUrl(
       `?primaryTraceDateFilter=${dateParam({ dateOption: "Today" })}`,
