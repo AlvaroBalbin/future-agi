@@ -1701,6 +1701,7 @@ def promote_conversation_checkpoint(
             ]
             environment.stage_outputs = stage_outputs + list(fresh.values())
             environment.scenario_count = len(suite)
+            environment.payload["scenario_count"] = len(suite)
             environment.save(
                 update_fields=[
                     "payload",
