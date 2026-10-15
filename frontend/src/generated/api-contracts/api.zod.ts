@@ -48132,6 +48132,14 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       }),
     ),
   }),
+  status_counts: zod.object({
+    queued: zod.number(),
+    in_progress: zod.number(),
+    passed: zod.number(),
+    failed: zod.number(),
+    error: zod.number(),
+    inconclusive: zod.number(),
+  }),
   evaluation_columns: zod.array(
     zod.object({
       id: zod.string().min(1),
