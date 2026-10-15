@@ -84,7 +84,6 @@ export default function RunTraceTable({
   const [groupBy, setGroupBy] = useState("goal");
   // The eval column whose ⋮ menu is open: { evalId, name, anchorEl } or null.
   const [evalMenuFor, setEvalMenuFor] = useState(null);
-  const [statusChip, setStatusChip] = useState("all");
   const [page, setPage] = useState(1);
   const [visibleColumns, setVisibleColumns] = useState(() =>
     defaultTraceColumns(),
@@ -141,12 +140,14 @@ export default function RunTraceTable({
     if (filters.callExecutionId?.length)
       next.call_execution_id = filters.callExecutionId;
     if (filters.goal?.length) next.goal = filters.goal;
+    if (filters.goal_not?.length) next.goal_not = filters.goal_not;
     if (filters.subGoal?.length) next.sub_goal = filters.subGoal;
+    if (filters.subGoal_not?.length) next.sub_goal_not = filters.subGoal_not;
     if (filters.status?.length) next.status = filters.status;
+    if (filters.status_not?.length) next.status_not = filters.status_not;
     if (filters.goal_outcome?.length) next.goal_outcome = filters.goal_outcome;
-    if (statusChip !== "all") next.status = [statusChip];
     return next;
-  }, [filters, statusChip]);
+  }, [filters]);
 
   // A pager click opens the new page at its first row. Not on a drawer step:
   // there the open call's row scrolls itself into view. The table scrolls in
@@ -200,6 +201,7 @@ export default function RunTraceTable({
     count = 0,
     groups = [],
     facets = {},
+    statusCounts: serverStatusCounts = {},
     totalPages = 1,
     agentType = null,
     runActive = false,
@@ -383,13 +385,13 @@ export default function RunTraceTable({
     () => [
       {
         value: "goal",
-        label: "Goal",
+        label: "Use case",
         type: "enum",
         choices: goalOptions,
       },
       {
         value: "subGoal",
-        label: "Sub goal",
+        label: "Sub-goal",
         type: "enum",
         choices: subGoalOptions,
       },
@@ -411,15 +413,26 @@ export default function RunTraceTable({
     0,
   );
 
-  const statusCounts = useMemo(() => {
-    const byStatus = Object.fromEntries(
-      (facets.status ?? []).map((item) => [item.value, item.count]),
-    );
-    return {
-      all: Object.values(byStatus).reduce((sum, count) => sum + count, 0),
-      ...byStatus,
-    };
-  }, [facets.status]);
+  // Counted under every filter but status, so the chips don't empty each other.
+  const statusCounts = useMemo(
+    () => ({
+      all: Object.values(serverStatusCounts).reduce(
+        (sum, count) => sum + count,
+        0,
+      ),
+      ...serverStatusCounts,
+    }),
+    [serverStatusCounts],
+  );
+  // The chips and the panel's Status field edit the same filter; a chip lights
+  // up only when it alone describes it.
+  const statusChip = filters.status_not?.length
+    ? ""
+    : filters.status?.length === 1
+      ? filters.status[0]
+      : filters.status?.length
+        ? ""
+        : "all";
 
   // The panel edits its own fields; the affected-calls scope stays until its chip
   // is dismissed.
@@ -446,7 +459,6 @@ export default function RunTraceTable({
     } else {
       setFilters(keepScope(result));
     }
-    setStatusChip("all");
   };
 
   // Like a "select all" box: on only while every group on screen is open,
@@ -591,11 +603,13 @@ export default function RunTraceTable({
         value={statusChip}
         counts={statusCounts}
         onChange={(value) => {
-          setStatusChip(value);
           setFilters((current) => {
-            if (!current.status) return current;
-            const { status: _status, ...rest } = current;
-            return rest;
+            const {
+              status: _status,
+              status_not: _statusNot,
+              ...rest
+            } = current;
+            return value === "all" ? rest : { ...rest, status: [value] };
           });
           setPage(1);
         }}
