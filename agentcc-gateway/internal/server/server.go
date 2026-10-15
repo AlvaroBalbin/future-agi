@@ -32,6 +32,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/providers/speech"
 	"github.com/futureagi/agentcc-gateway/internal/realtime"
 	"github.com/futureagi/agentcc-gateway/internal/redisstate"
 	"github.com/futureagi/agentcc-gateway/internal/responses"
@@ -470,6 +471,11 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		AllowedOrigins:     cfg.CORS.AllowedOrigins,
 	})
 	router.Handle("GET", "/v1/realtime", realtimeHandler.HandleRealtime)
+
+	// Speech vendors' own streaming APIs (Deepgram, Cartesia), each under the vendor's name.
+	for _, ep := range speech.Endpoints() {
+		router.Handle("GET", "/"+ep.Vendor+ep.Path, handlers.SpeechRelay(ep.Vendor, ep.Path))
+	}
 
 	// Video Generation API.
 	router.Handle("POST", "/v1/videos", handlers.SubmitVideo)
