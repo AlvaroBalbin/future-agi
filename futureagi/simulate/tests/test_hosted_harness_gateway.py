@@ -1854,6 +1854,53 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     }
 
 
+@pytest.mark.django_db
+def test_a_fresh_build_runs_the_staged_pipeline_when_the_builder_session_is_off(
+    organization, settings, monkeypatch
+):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="launch-gateway-staged")
+    client = _Daytona()
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = "sha256:" + "b" * 64
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
+    settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
+    settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
+    settings.ALK_HOSTED_BUILDER_SESSION = False
+    simulator_values = {
+        "ALK_HARNESS": "vertex-gemini",
+        "ALK_HARNESS_MODEL": "gemini-3.7-flash",
+        "DEEPGRAM_API_KEY": "platform-simulator-deepgram",
+        "GOOGLE_APPLICATION_CREDENTIALS": _SIMULATOR_VERTEX_CREDENTIALS_PATH,
+        "GOOGLE_CLOUD_PROJECT": "platform-simulator-project",
+        "GOOGLE_CLOUD_LOCATION": "global",
+    }
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway._platform_simulator_material",
+        lambda: (simulator_values, b'{"project_id":"platform-simulator-project"}'),
+    )
+
+    selected_capacity = SandboxCapacity("selected", 6, 12_288, 20, 1)
+    with patch(
+        "simulate.services.harness_capacity.configured_capacity",
+        return_value=selected_capacity,
+    ):
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+
+    assert attempt.state == HostedHarnessAttempt.State.RUNNING
+    command = client.sandbox.process.session_request.command
+    assert "--await-harness" not in command and "--adjustments" in command
+    assert not job.conversation.messages.filter(content__startswith="Build the test environment").exists()
+
+
+
 def _launch_and_read_job_json(
     organization, settings, *, requested_parallelism, provider_name="daytona"
 ):
