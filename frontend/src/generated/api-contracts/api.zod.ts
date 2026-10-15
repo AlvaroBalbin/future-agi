@@ -6540,6 +6540,7 @@ export const AgentccOrgConfigsActiveResponse = zod.object({
 Returns all active org configs keyed by org ID.
 Authenticated by admin token (not user JWT).
  */
+
 export const AgentccOrgConfigsBulkListResponse = zod.object({
   status: zod.boolean(),
   result: zod.record(
@@ -6563,6 +6564,11 @@ export const AgentccOrgConfigsBulkListResponse = zod.object({
       model_map: zod.object({}).passthrough(),
     }),
   ),
+  unbuilt_org_ids: zod
+    .array(zod.string().min(1))
+    .describe(
+      "Orgs with an active config that could not be built. The gateway keeps their last good config instead of dropping them.",
+    ),
 });
 
 /**
