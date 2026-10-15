@@ -123,12 +123,16 @@ const requestWindow = (r: Request): string[] | null => {
 };
 
 // Collects every read of `path` for one project, so a step can require that
-// none of them went out with the stored window.
-const captureRequests = (page: Page, path: string, projectId: string) => {
+// none of them went out with the stored window. A null project matches the
+// workspace-wide reads (/dashboard/users and a user's detail page), which
+// send no project_id.
+const captureRequests = (page: Page, path: string, projectId: string | null) => {
   const captured: Request[] = [];
   page.on('request', (r) => {
+    const project = wire(r).project_id;
     if ((r.method() === 'POST' || r.method() === 'GET')
-        && new URL(r.url()).pathname === path && wire(r).project_id === projectId) {
+        && new URL(r.url()).pathname === path
+        && (projectId === null ? project == null : project === projectId)) {
       captured.push(r);
     }
   });
@@ -183,6 +187,9 @@ const identity = (session: string, user: string) => {
 
 async function seedTwoDays(
   actor: TestActor, probe: StateProbe, req: APIRequestContext, suffix: string,
+  // One user behind both traces, so that user's detail page has a row on
+  // each day.
+  { oneUser = false }: { oneUser?: boolean } = {},
 ): Promise<Seeded> {
   const projectName = `e2e-svdates-${suffix}`;
   const names = {
@@ -204,7 +211,7 @@ async function seedTwoDays(
   const yesterday = await sendTrace(req, {
     collectorUrl: E2E.collectorUrl, apiKey: actor.apiKey, secretKey: actor.secretKey,
     projectName, rootName: names.yesterdayRoot, childName: names.yesterdayChild,
-    ...identity(names.yesterdaySession, names.yesterdayUser),
+    ...identity(names.yesterdaySession, oneUser ? names.todayUser : names.yesterdayUser),
     startTimeUnixNano: yesterdayNs, endTimeUnixNano: yesterdayNs + 50_000_000n,
   });
   for (const t of [today, yesterday]) {
@@ -233,15 +240,19 @@ async function seedTwoDays(
   return { projectId: projects[0].id, today, yesterday, names, sessionIds };
 }
 
+// A null project creates a workspace view: the /dashboard/users tabs
+// (tab_type users) and the user detail tabs (tab_type user_detail).
 async function createViews(
-  actor: TestActor, projectId: string, tabType: 'traces' | 'spans' | 'sessions' | 'users', label: string,
+  actor: TestActor, projectId: string | null,
+  tabType: 'traces' | 'spans' | 'sessions' | 'users' | 'user_detail', label: string,
   suffix: string, config: (option: Option) => Record<string, unknown>,
 ): Promise<View[]> {
   const views: View[] = [];
   for (const option of OPTIONS) {
     const name = `e2e-svd-${label}-${option}-${suffix}`;
     const created = await actor.api.post<{ result: { id: string } }>(SAVED_VIEWS_PATH, {
-      project_id: projectId, name, tab_type: tabType, config: config(option),
+      ...(projectId === null ? {} : { project_id: projectId }),
+      name, tab_type: tabType, config: config(option),
     });
     views.push({ option, name, id: created.result.id });
   }
@@ -279,8 +290,11 @@ async function openDefaultList(page: Page, url: string, listPath: string, firstV
 async function openListView(page: Page, opts: {
   view: View; dateKey: string; stored: string[]; requests: Request[];
   listPath: string; colId: string | null; rows: Record<Option, string[]>;
+  // Workspace-wide lists also hold other flows' rows from the same worker
+  // org; `keep` narrows the exact-set check to this flow's own rows.
+  keep?: (row: string) => boolean;
 }) {
-  const { view, dateKey, stored, requests, listPath, colId, rows } = opts;
+  const { view, dateKey, stored, requests, listPath, colId, rows, keep = () => true } = opts;
   // A UTC-hour or midnight boundary can pass between computing the
   // expectation and the app resolving the preset; accept either side.
   const before = await presetWindows(page);
@@ -310,8 +324,46 @@ async function openListView(page: Page, opts: {
         .toContainEqual(requestWindow(r));
     }
   }
-  await expect.poll(() => gridRows(page, colId), { timeout: UI_READY })
+  await expect.poll(async () => (await gridRows(page, colId)).filter(keep), { timeout: UI_READY })
     .toEqual([...rows[view.option]].sort());
+}
+
+// One preset or Custom bookmark opened by a full page load: every list
+// request since navigation began carries the preset as of now (or the
+// stored Custom range), the URL date param is rewritten (or kept), and the
+// grid lists exactly the rows that window selects.
+async function openBookmark(page: Page, opts: {
+  option: Option; url: string; dateKey: string; stored: string[]; requests: Request[];
+  listPath: string; colId: string | null; rows: Record<Option, string[]>;
+  keep?: (row: string) => boolean;
+}) {
+  const { option, url, dateKey, stored, requests, listPath, colId, rows, keep = () => true } = opts;
+  const before = await presetWindows(page);
+  requests.length = 0;
+  const firstLoad = page.waitForResponse((r) =>
+    new URL(r.url()).pathname === listPath && r.request().method() !== 'OPTIONS',
+    { timeout: UI_READY });
+  await page.goto(url, { waitUntil: 'domcontentloaded' });
+  await firstLoad;
+  if (option === 'Custom') {
+    expect(urlDateFilter(page, dateKey)).toEqual({ dateFilter: stored, dateOption: 'Custom' });
+    expect(requests.length).toBeGreaterThan(0);
+    for (const r of requests) expect(requestWindow(r)).toEqual(toIso(stored));
+  } else {
+    await expect.poll(() => urlDateFilter(page, dateKey), { timeout: UI_READY })
+      .not.toEqual({ dateFilter: stored, dateOption: option });
+    const after = await presetWindows(page);
+    const candidates = [before[option], after[option]];
+    expect(candidates.map((w) => ({ dateFilter: w.local, dateOption: option })),
+      `URL date filter for ${option}`).toContainEqual(urlDateFilter(page, dateKey));
+    expect(requests.length).toBeGreaterThan(0);
+    for (const r of requests) {
+      expect(candidates.map((c) => c.iso), `request window for ${option}`)
+        .toContainEqual(requestWindow(r));
+    }
+  }
+  await expect.poll(async () => (await gridRows(page, colId)).filter(keep), { timeout: UI_READY })
+    .toEqual([...rows[option]].sort());
 }
 
 test('OBS-E2E-038: a saved view opens its preset date on fresh dates, and Custom on its saved range', {
@@ -719,6 +771,157 @@ for (const surface of [
       await expect(page).toHaveURL((url) => url.searchParams.get('tab') === 'traces'
         && url.searchParams.get(surface.dateKey) === null, { timeout: UI_READY });
     });
+    await req.dispose();
+  });
+}
+
+test('OBS-E2E-048: the workspace Users list opens a preset date fresh from a bookmark or a saved view, and Custom as stored', {
+  tag: ['@flow'],
+  annotation: flowAnnotation({
+    id: 'OBS-E2E-048', area: 'observe',
+    userGoal: 'A user who reopens the workspace Users list days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range',
+    steps: ['send one trace now and one yesterday at noon, each from its own user, so a project auto-creates',
+            'for each preset and Custom, open a /dashboard/users link carrying that option with a range from ~400 days ago',
+            'save one workspace Users view per preset and Custom, all storing that range',
+            'open /dashboard/users and click each saved view tab in turn'],
+    backendChecks: ['both traces have all their spans in ClickHouse spans (FINAL)',
+                    'each preset link and view sends every user-list request with the preset window as of now, never the stored one, and the URL date param is rewritten to it',
+                    'Today lists only the today user, Yesterday only the yesterday user, and 7D–12M exactly both, among this flow\'s users',
+                    'Custom links and views send and keep their stored range verbatim and list neither user',
+                    'opening the views writes nothing back: every tracer_saved_view row in PG still holds its stored range'],
+  }),
+}, async ({ page, actor, probe }, testInfo) => {
+  // SPAN_VISIBLE (15s) + 8 bookmark loads + the list load + 8 tab steps, each
+  // bounded by UI_READY (17 × 60s = 1020s); the rest is headroom.
+  test.setTimeout(1_100_000);
+  const req = await request.newContext();
+  const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
+  const stored = staleRange(400);
+  const seeded = await test.step('seed a trace now and one yesterday at noon',
+    () => seedTwoDays(actor, probe, req, suffix));
+  // Users and Sessions-view getConfig: { display: { …, dateFilter }, extra_filters }.
+  const views = await createViews(actor, null, 'users', 'wsu', suffix, (option) => ({
+    display: { dateFilter: { dateFilter: stored, dateOption: option } },
+    extra_filters: [],
+  }));
+  await attachSeeded(testInfo, { ...seeded, stored, views });
+
+  const { todayUser, yesterdayUser } = seeded.names;
+  const both = [todayUser, yesterdayUser];
+  const rows: Record<Option, string[]> = {
+    Today: [todayUser], Yesterday: [yesterdayUser],
+    '7D': both, '30D': both, '3M': both, '6M': both, '12M': both, Custom: [],
+  };
+  // The list is workspace-wide: other flows in this worker's org add users.
+  const keep = (row: string) => row.endsWith(suffix);
+  const requests = captureRequests(page, USER_LIST_PATH, null);
+
+  for (const option of OPTIONS) {
+    await test.step(`${option}: open the bookmarked Users link`, () => openBookmark(page, {
+      option, stored, requests, rows, keep, listPath: USER_LIST_PATH, colId: 'user_id',
+      dateKey: 'userDateFilter',
+      url: bookmark('/dashboard/users?usersTab=all',
+        { userDateFilter: { dateFilter: stored, dateOption: option } }),
+    }));
+  }
+  await test.step('open the workspace Users list', () =>
+    openDefaultList(page, '/dashboard/users?usersTab=all', USER_LIST_PATH, views[0].name));
+  for (const view of views) {
+    await test.step(`${view.option}: open the saved Users view`, () => openListView(page, {
+      view, stored, requests, rows, keep, listPath: USER_LIST_PATH, colId: 'user_id',
+      dateKey: 'userDateFilter',
+    }));
+  }
+  await test.step('storage: opening the views wrote nothing back', () =>
+    expectStoredUnchanged(probe, views, "->'display'->'dateFilter'",
+      (v) => ({ dateFilter: stored, dateOption: v.option })));
+  await req.dispose();
+});
+
+for (const sub of [
+  {
+    id: 'OBS-E2E-049', subTab: 'sessions', noun: 'session', listPath: SESSION_LIST_PATH,
+    query: 'userTab=sessions', dateKey: 'sessionDateFilter', colId: null,
+  },
+  {
+    id: 'OBS-E2E-050', subTab: 'traces', noun: 'trace', listPath: TRACE_LIST_PATH,
+    query: 'userTab=traces&selectedTab=trace', dateKey: 'primaryTraceDateFilter', colId: 'trace_name',
+  },
+  {
+    id: 'OBS-E2E-051', subTab: 'spans', noun: 'span', listPath: SPAN_LIST_PATH,
+    query: 'userTab=traces&selectedTab=spans', dateKey: 'primarySpanDateFilter', colId: 'span_name',
+  },
+] as const) {
+  test(`${sub.id}: a user's ${sub.noun} tab opens a preset date fresh from a bookmark or a saved view, and Custom as stored`, {
+    tag: ['@flow'],
+    annotation: flowAnnotation({
+      id: sub.id, area: 'observe',
+      userGoal: `A user who reopens one end user's ${sub.noun} tab days later, from a bookmark or a saved view set to a preset date (Today, Yesterday, 7D…12M), sees that preset as of now, while Custom keeps its exact range`,
+      steps: ['send one trace now and one yesterday at noon from the same end user, so a project auto-creates',
+              `for each preset and Custom, open that user's ${sub.noun} tab by a link carrying that option with a range from ~400 days ago`,
+              `save one user-detail ${sub.noun} view per preset and Custom, all storing that range`,
+              `open the user's ${sub.noun} tab and click each saved view tab in turn`],
+      backendChecks: ['both traces have all their spans in ClickHouse spans (FINAL)',
+                      `each preset link and view sends every ${sub.noun}-list request with the preset window as of now, never the stored one, and the URL date param is rewritten to it`,
+                      `Today lists only the today ${sub.noun}s, Yesterday only the yesterday ${sub.noun}s, and 7D–12M exactly both days`,
+                      `Custom links and views send and keep their stored range verbatim and list no ${sub.noun}`,
+                      'opening the views writes nothing back: every tracer_saved_view row in PG still holds its stored range'],
+    }),
+  }, async ({ page, actor, probe }, testInfo) => {
+    // Same budget as OBS-E2E-048: SPAN_VISIBLE + 17 × UI_READY + headroom.
+    test.setTimeout(1_100_000);
+    const req = await request.newContext();
+    const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
+    const stored = staleRange(400);
+    const seeded = await test.step('seed a trace now and one yesterday at noon from one user',
+      () => seedTwoDays(actor, probe, req, suffix, { oneUser: true }));
+    // UserDetailTabBar handleSaveViewConfirm: the sub-view's getConfig plus sub_tab.
+    const views = await createViews(actor, null, 'user_detail', `ud-${sub.subTab}`, suffix, (option) => ({
+      sub_tab: sub.subTab,
+      display: { dateFilter: { dateFilter: stored, dateOption: option } },
+      ...(sub.subTab === 'sessions' ? {} : { filters: [] }),
+      extra_filters: [],
+    }));
+    await attachSeeded(testInfo, { ...seeded, stored, views });
+
+    const n = seeded.names;
+    const byDay: Record<string, [string[], string[]]> = {
+      sessions: [[seeded.sessionIds.today], [seeded.sessionIds.yesterday]],
+      traces: [[n.todayRoot], [n.yesterdayRoot]],
+      spans: [[n.todayRoot, n.todayChild], [n.yesterdayRoot, n.yesterdayChild]],
+    };
+    const [today, yesterday] = byDay[sub.subTab];
+    const both = [...today, ...yesterday];
+    const rows: Record<Option, string[]> = {
+      Today: today, Yesterday: yesterday,
+      '7D': both, '30D': both, '3M': both, '6M': both, '12M': both, Custom: [],
+    };
+    const base = `/dashboard/users/${encodeURIComponent(n.todayUser)}?${sub.query}`;
+    // The user detail page reads across projects, so its lists send no project_id.
+    const requests = captureRequests(page, sub.listPath, null);
+
+    for (const option of OPTIONS) {
+      await test.step(`${option}: open the bookmarked ${sub.noun} tab`, () => openBookmark(page, {
+        option, stored, requests, rows, listPath: sub.listPath, colId: sub.colId,
+        dateKey: sub.dateKey,
+        url: bookmark(base, { [sub.dateKey]: { dateFilter: stored, dateOption: option } }),
+      }));
+    }
+    // The user pages default to Today, which the Today view would leave
+    // unchanged (no new request); start from an unrelated Custom range so
+    // every view click moves the window.
+    await test.step(`open the user's ${sub.noun} tab`, () => openDefaultList(page,
+      bookmark(base, { [sub.dateKey]: { dateFilter: staleRange(500), dateOption: 'Custom' } }),
+      sub.listPath, views[0].name));
+    for (const view of views) {
+      await test.step(`${view.option}: open the saved ${sub.noun} view`, () => openListView(page, {
+        view, stored, requests, rows, listPath: sub.listPath, colId: sub.colId,
+        dateKey: sub.dateKey,
+      }));
+    }
+    await test.step('storage: opening the views wrote nothing back', () =>
+      expectStoredUnchanged(probe, views, "->'display'->'dateFilter'",
+        (v) => ({ dateFilter: stored, dateOption: v.option })));
     await req.dispose();
   });
 }
