@@ -2140,7 +2140,11 @@ class HostedHarnessGateway:
                 (dispatch_payload.get("metadata") or {}).get("simulation_only")
             )
             # A fresh build is the conversation's harness's work; this command waits for it.
-            harness_builds = authoring_archive is None and not simulation_only
+            harness_builds = (
+                authoring_archive is None
+                and not simulation_only
+                and getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)
+            )
             bundle_command = (
                 "rm -rf /work/bundle && "
                 "cp -a /work/authoring/environment-bundle /work/bundle && "

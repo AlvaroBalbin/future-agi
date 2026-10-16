@@ -731,6 +731,7 @@ def test_completed_chat_turn_publishes_its_checkpoint_to_the_environment(
 
     environment.refresh_from_db()
     assert environment.scenario_count == 3
+    assert environment.payload["scenario_count"] == 3
     rows = {
         row.scenario_key: row
         for row in HostedHarnessScenario.no_workspace_objects.filter(job=environment)
@@ -1035,6 +1036,7 @@ def test_each_conversation_has_its_own_checkpoint_sequence_clock(
 
     environment.refresh_from_db()
     assert environment.scenario_count == 4
+    assert environment.payload["scenario_count"] == 4
     assert HostedHarnessScenario.no_workspace_objects.filter(
         job=environment, scenario_key=_key(late_name)
     ).exists()
