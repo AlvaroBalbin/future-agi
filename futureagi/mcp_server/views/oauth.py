@@ -4,6 +4,7 @@ from urllib.parse import urlencode
 
 import structlog
 from django.db import DatabaseError
+from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -31,15 +32,16 @@ from mcp_server.serializers.contracts import (
     MCPOAuthTokenRequestSerializer,
     MCPOAuthTokenResponseSerializer,
 )
-from tfc.utils.api_contracts import validated_request
 from mcp_server.throttles import (
     MCPOAuthTokenClientThrottle,
     MCPOAuthTokenIPThrottle,
+    MCPOAuthTokenThrottled,
     get_invalid_attempt_lockout_wait,
     record_invalid_token_attempt,
     request_data_value,
     stable_hash,
 )
+from tfc.utils.api_contracts import validated_request
 
 logger = structlog.get_logger(__name__)
 
@@ -287,7 +289,7 @@ class MCPOAuthTokenView(APIView):
             "mcp_oauth_token_throttled",
             retry_after_seconds=wait,
         )
-        return super().throttled(request, wait)
+        raise MCPOAuthTokenThrottled(wait)
 
     def _invalid_token_response(
         self,
@@ -316,6 +318,16 @@ class MCPOAuthTokenView(APIView):
             200: MCPOAuthTokenResponseSerializer,
             400: MCPOAuthTokenErrorResponseSerializer,
             401: MCPOAuthTokenErrorResponseSerializer,
+            429: openapi.Response(
+                "Too many requests",
+                MCPOAuthTokenErrorResponseSerializer,
+                headers={
+                    "Retry-After": openapi.Schema(
+                        type=openapi.TYPE_INTEGER,
+                        description="Seconds before retrying the token request.",
+                    )
+                },
+            ),
         },
         validation_error_response=_oauth_validation_error_response,
     )

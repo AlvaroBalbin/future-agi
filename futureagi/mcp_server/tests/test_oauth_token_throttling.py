@@ -1,5 +1,8 @@
 """Tests for MCP OAuth token endpoint throttling."""
 
+import os
+import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
@@ -8,14 +11,18 @@ from django.core.cache import cache
 from django.test import override_settings
 from rest_framework.test import APIRequestFactory
 
+import mcp_server.throttles as throttles
+from mcp_server import rate_limiter
 from mcp_server.models.oauth_client import MCPOAuthClient
 from mcp_server.models.oauth_code import MCPOAuthCode
 from mcp_server.oauth_utils import hash_client_secret
-from mcp_server.throttles import _invalid_attempt_key, record_invalid_token_attempt
-import mcp_server.throttles as throttles
+from mcp_server.throttles import (
+    MCPOAuthTokenIPThrottle,
+    _invalid_attempt_key,
+    record_invalid_token_attempt,
+)
 from mcp_server.views.oauth import MCPOAuthTokenView
 from tfc.middleware.workspace_context import set_workspace_context
-
 
 TOKEN_URL = "/mcp/oauth/token/"
 CLIENT_SECRET = "correct-secret"
@@ -61,9 +68,7 @@ def _create_auth_code(user, workspace, client):
     MCP_OAUTH_TOKEN_IP_THROTTLE_RATE="2/min",
     MCP_OAUTH_TOKEN_CLIENT_THROTTLE_RATE="100/min",
 )
-def test_authorization_code_attempts_are_throttled_by_ip(
-    api_client, oauth_client_app
-):
+def test_authorization_code_attempts_are_throttled_by_ip(api_client, oauth_client_app):
     payload = {
         "grant_type": "authorization_code",
         "code": "bad-code",
@@ -94,6 +99,8 @@ def test_authorization_code_attempts_are_throttled_by_ip(
     assert first.status_code == 401
     assert second.status_code == 401
     assert third.status_code == 429
+    assert third.data["error"] == "slow_down"
+    assert int(third["Retry-After"]) > 0
 
 
 @override_settings(
@@ -132,6 +139,59 @@ def test_refresh_token_attempts_are_throttled_by_client_id_across_ips(
     assert first.status_code == 401
     assert second.status_code == 401
     assert third.status_code == 429
+    assert third.data["error"] == "slow_down"
+    assert int(third["Retry-After"]) > 0
+
+
+@override_settings(
+    MCP_OAUTH_TOKEN_IP_THROTTLE_RATE="1/min",
+    MCP_OAUTH_TOKEN_CLIENT_THROTTLE_RATE="100/min",
+)
+def test_ip_throttle_counts_concurrent_requests_atomically():
+    factory = APIRequestFactory()
+    requests = [
+        factory.post(
+            TOKEN_URL,
+            {"grant_type": "refresh_token", "client_id": "same-client"},
+            format="json",
+            REMOTE_ADDR="203.0.113.25",
+        )
+        for _ in range(2)
+    ]
+
+    def allow(request):
+        return MCPOAuthTokenIPThrottle().allow_request(request, None)
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        results = list(workers.map(allow, requests))
+
+    assert sum(results) == 1
+
+
+@pytest.mark.skipif(not os.environ.get("REDIS_URL"), reason="needs Redis")
+def test_redis_throttle_script_counts_concurrent_requests_atomically():
+    import redis
+
+    client = redis.Redis.from_url(os.environ["REDIS_URL"])
+    client.ping()
+    script = client.register_script(rate_limiter._SINGLE_WINDOW_LUA)
+    key = f"mcp_oauth_test:{uuid.uuid4().hex}"
+    callers = 8
+    barrier = Barrier(callers)
+
+    def allow(_):
+        barrier.wait()
+        allowed, _oldest = script(
+            keys=[key],
+            args=[time.time(), 2, 60, uuid.uuid4().hex],
+        )
+        return int(allowed) == 1
+
+    try:
+        with ThreadPoolExecutor(max_workers=callers) as workers:
+            assert sum(workers.map(allow, range(callers))) == 2
+    finally:
+        client.delete(key)
 
 
 @override_settings(
@@ -141,9 +201,7 @@ def test_refresh_token_attempts_are_throttled_by_client_id_across_ips(
     MCP_OAUTH_TOKEN_INVALID_ATTEMPT_WINDOW_SECONDS=300,
     MCP_OAUTH_TOKEN_INVALID_LOCKOUT_SECONDS=60,
 )
-def test_repeated_invalid_refresh_grants_trigger_lockout(
-    api_client, oauth_client_app
-):
+def test_repeated_invalid_refresh_grants_trigger_lockout(api_client, oauth_client_app):
     payload = {
         "grant_type": "refresh_token",
         "refresh_token": "bad-refresh-token",

@@ -5,8 +5,10 @@ import time
 
 from django.conf import settings
 from django.core.cache import cache
+from rest_framework.exceptions import APIException, Throttled
 from rest_framework.throttling import SimpleRateThrottle
 
+from mcp_server.rate_limiter import check_sliding_window
 
 DEFAULT_OAUTH_TOKEN_IP_RATE = "30/min"
 DEFAULT_OAUTH_TOKEN_CLIENT_RATE = "10/min"
@@ -96,7 +98,53 @@ def record_invalid_token_attempt(request) -> int:
     return lockout_seconds
 
 
-class MCPOAuthTokenIPThrottle(SimpleRateThrottle):
+class MCPOAuthTokenThrottled(Throttled):
+    """OAuth-shaped 429 exception that still receives DRF retry headers."""
+
+    def __init__(self, wait):
+        self.wait = wait
+        APIException.__init__(
+            self,
+            {
+                "error": "slow_down",
+                "error_description": "Too many token requests",
+            },
+            "throttled",
+        )
+
+
+class AtomicRateThrottle(SimpleRateThrottle):
+    """Count requests with the shared atomic sliding-window limiter."""
+
+    cache_format = "mcp_oauth_token_throttle_v2_%(scope)s_%(ident)s"
+
+    def allow_request(self, request, view):
+        if self.rate is None:
+            return True
+
+        self.key = self.get_cache_key(request, view)
+        if self.key is None:
+            return True
+
+        self.now = self.timer()
+        allowed, oldest = check_sliding_window(
+            self.key,
+            self.num_requests,
+            self.duration,
+            now=self.now,
+        )
+        if allowed:
+            self._wait = None
+            return True
+
+        self._wait = max(int(self.duration - (self.now - oldest)) + 1, 1)
+        return False
+
+    def wait(self):
+        return getattr(self, "_wait", None)
+
+
+class MCPOAuthTokenIPThrottle(AtomicRateThrottle):
     """Rate-limit token exchange attempts from the same remote address."""
 
     scope = "mcp_oauth_token_ip"
@@ -113,7 +161,7 @@ class MCPOAuthTokenIPThrottle(SimpleRateThrottle):
         return self.cache_format % {"scope": self.scope, "ident": ident}
 
 
-class MCPOAuthTokenClientThrottle(SimpleRateThrottle):
+class MCPOAuthTokenClientThrottle(AtomicRateThrottle):
     """Rate-limit token exchange attempts for the same client and grant type."""
 
     scope = "mcp_oauth_token_client"
