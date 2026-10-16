@@ -581,9 +581,15 @@ import type {
   HarnessConversationEventAckApi,
   HarnessConversationEventBatchApi,
   HarnessConversationMessageCreateApi,
+  HarnessConversationOverviewApi,
+  HarnessConversationOverviewQueryApi,
+  HarnessConversationPublishApi,
   HarnessConversationReadApi,
   HarnessConversationRerunApi,
+  HarnessConversationRunStartApi,
   HarnessConversationRunStatusApi,
+  HarnessConversationRunsQueryApi,
+  HarnessConversationScenarioQueryApi,
   HarnessConversationTranscriptAppendApi,
   HarnessConversationTranscriptAppendResponseApi,
   HarnessConversationWorkspaceResponseApi,
@@ -60402,6 +60408,92 @@ export const simulateApiHarnessConversationsEvents = async (
   );
 };
 
+export type simulateApiHarnessConversationsOverviewResponse200 = {
+  data: HarnessConversationOverviewApi;
+  status: 200;
+};
+
+export type simulateApiHarnessConversationsOverviewResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessConversationsOverviewResponseSuccess =
+  simulateApiHarnessConversationsOverviewResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessConversationsOverviewResponseError =
+  simulateApiHarnessConversationsOverviewResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessConversationsOverviewResponse =
+  | simulateApiHarnessConversationsOverviewResponseSuccess
+  | simulateApiHarnessConversationsOverviewResponseError;
+
+export const getSimulateApiHarnessConversationsOverviewUrl = (id: string) => {
+  return `/simulate/api/harness/conversations/${id}/overview/`;
+};
+
+export const simulateApiHarnessConversationsOverview = async (
+  id: string,
+  harnessConversationOverviewQueryApi: HarnessConversationOverviewQueryApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessConversationsOverviewResponse> => {
+  return apiMutator<simulateApiHarnessConversationsOverviewResponse>(
+    getSimulateApiHarnessConversationsOverviewUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessConversationOverviewQueryApi),
+    },
+  );
+};
+
+export type simulateApiHarnessConversationsPublishResponse201 = {
+  data: HarnessConversationPublishApi;
+  status: 201;
+};
+
+export type simulateApiHarnessConversationsPublishResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiHarnessConversationsPublishResponseSuccess =
+  simulateApiHarnessConversationsPublishResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessConversationsPublishResponseError =
+  simulateApiHarnessConversationsPublishResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessConversationsPublishResponse =
+  | simulateApiHarnessConversationsPublishResponseSuccess
+  | simulateApiHarnessConversationsPublishResponseError;
+
+export const getSimulateApiHarnessConversationsPublishUrl = (id: string) => {
+  return `/simulate/api/harness/conversations/${id}/publish/`;
+};
+
+export const simulateApiHarnessConversationsPublish = async (
+  id: string,
+  harnessConversationPublishApi: HarnessConversationPublishApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessConversationsPublishResponse> => {
+  return apiMutator<simulateApiHarnessConversationsPublishResponse>(
+    getSimulateApiHarnessConversationsPublishUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessConversationPublishApi),
+    },
+  );
+};
+
 export type simulateApiHarnessConversationsRerunResponse202 = {
   data: HarnessConversationRunStatusApi;
   status: 202;
@@ -60481,6 +60573,137 @@ export const simulateApiHarnessConversationsRunStatus = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessConversationsRunsResponse201 = {
+  data: HarnessConversationRunsQueryApi;
+  status: 201;
+};
+
+export type simulateApiHarnessConversationsRunsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiHarnessConversationsRunsResponseSuccess =
+  simulateApiHarnessConversationsRunsResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessConversationsRunsResponseError =
+  simulateApiHarnessConversationsRunsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessConversationsRunsResponse =
+  | simulateApiHarnessConversationsRunsResponseSuccess
+  | simulateApiHarnessConversationsRunsResponseError;
+
+export const getSimulateApiHarnessConversationsRunsUrl = (id: string) => {
+  return `/simulate/api/harness/conversations/${id}/runs/`;
+};
+
+export const simulateApiHarnessConversationsRuns = async (
+  id: string,
+  harnessConversationRunsQueryApi: HarnessConversationRunsQueryApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessConversationsRunsResponse> => {
+  return apiMutator<simulateApiHarnessConversationsRunsResponse>(
+    getSimulateApiHarnessConversationsRunsUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessConversationRunsQueryApi),
+    },
+  );
+};
+
+export type simulateApiHarnessConversationsRunsStartRunResponse201 = {
+  data: HarnessConversationRunStartApi;
+  status: 201;
+};
+
+export type simulateApiHarnessConversationsRunsStartRunResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiHarnessConversationsRunsStartRunResponseSuccess =
+  simulateApiHarnessConversationsRunsStartRunResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessConversationsRunsStartRunResponseError =
+  simulateApiHarnessConversationsRunsStartRunResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessConversationsRunsStartRunResponse =
+  | simulateApiHarnessConversationsRunsStartRunResponseSuccess
+  | simulateApiHarnessConversationsRunsStartRunResponseError;
+
+export const getSimulateApiHarnessConversationsRunsStartRunUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness/conversations/${id}/runs/start/`;
+};
+
+export const simulateApiHarnessConversationsRunsStartRun = async (
+  id: string,
+  harnessConversationRunStartApi: HarnessConversationRunStartApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessConversationsRunsStartRunResponse> => {
+  return apiMutator<simulateApiHarnessConversationsRunsStartRunResponse>(
+    getSimulateApiHarnessConversationsRunsStartRunUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessConversationRunStartApi),
+    },
+  );
+};
+
+export type simulateApiHarnessConversationsScenariosResponse201 = {
+  data: HarnessConversationScenarioQueryApi;
+  status: 201;
+};
+
+export type simulateApiHarnessConversationsScenariosResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiHarnessConversationsScenariosResponseSuccess =
+  simulateApiHarnessConversationsScenariosResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessConversationsScenariosResponseError =
+  simulateApiHarnessConversationsScenariosResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessConversationsScenariosResponse =
+  | simulateApiHarnessConversationsScenariosResponseSuccess
+  | simulateApiHarnessConversationsScenariosResponseError;
+
+export const getSimulateApiHarnessConversationsScenariosUrl = (id: string) => {
+  return `/simulate/api/harness/conversations/${id}/scenarios/`;
+};
+
+export const simulateApiHarnessConversationsScenarios = async (
+  id: string,
+  harnessConversationScenarioQueryApi: HarnessConversationScenarioQueryApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessConversationsScenariosResponse> => {
+  return apiMutator<simulateApiHarnessConversationsScenariosResponse>(
+    getSimulateApiHarnessConversationsScenariosUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessConversationScenarioQueryApi),
     },
   );
 };

@@ -18379,6 +18379,15 @@ export interface HarnessSourceUploadResponseApi {
   total_bytes: number;
 }
 
+export type HarnessJobAdjustmentApiTargetStage =
+  (typeof HarnessJobAdjustmentApiTargetStage)[keyof typeof HarnessJobAdjustmentApiTargetStage];
+
+export const HarnessJobAdjustmentApiTargetStage = {
+  understand: "understand",
+  environment: "environment",
+  scenarios: "scenarios",
+} as const;
+
 export interface HarnessJobAdjustmentApi {
   /**
    * A user correction to apply at the next safe harness stage boundary.
@@ -18391,6 +18400,9 @@ export interface HarnessJobAdjustmentApi {
    * @maxLength 128
    */
   client_request_id?: string;
+  target_stage?: HarnessJobAdjustmentApiTargetStage;
+  /** @minimum 1 */
+  scenario_delta?: number;
 }
 
 export type HarnessJobActionApiReason =
@@ -18959,6 +18971,15 @@ export interface HarnessUsageResponseApi {
   upgrade_cta?: HarnessUsageResponseApiUpgradeCta;
 }
 
+export type HarnessConversationAdjustmentApiTargetStage =
+  (typeof HarnessConversationAdjustmentApiTargetStage)[keyof typeof HarnessConversationAdjustmentApiTargetStage];
+
+export const HarnessConversationAdjustmentApiTargetStage = {
+  understand: "understand",
+  environment: "environment",
+  scenarios: "scenarios",
+} as const;
+
 export interface HarnessConversationAdjustmentApi {
   /**
    * @minLength 1
@@ -18970,6 +18991,9 @@ export interface HarnessConversationAdjustmentApi {
    * @maxLength 128
    */
   client_request_id?: string;
+  target_stage?: HarnessConversationAdjustmentApiTargetStage;
+  /** @minimum 1 */
+  scenario_delta?: number;
 }
 
 export interface HarnessConversationAdjustmentResponseApi {
@@ -19068,6 +19092,50 @@ export interface HarnessConversationEventAckApi {
   acked_through_sequence: number;
 }
 
+export interface HarnessConversationOverviewQueryApi {
+  [key: string]: unknown;
+}
+
+export type HarnessConversationOverviewApiEnvironment = {
+  [key: string]: string;
+};
+
+export type HarnessConversationOverviewApiUseCasesItem = {
+  [key: string]: string;
+};
+
+export type HarnessConversationOverviewApiCoverage = { [key: string]: string };
+
+export type HarnessConversationOverviewApiRecentRunsItem = {
+  [key: string]: string;
+};
+
+export type HarnessConversationOverviewApiBuildChangesItem = {
+  [key: string]: string;
+};
+
+export type HarnessConversationOverviewApiEarlierMessagesItem = {
+  [key: string]: string;
+};
+
+export interface HarnessConversationOverviewApi {
+  environment: HarnessConversationOverviewApiEnvironment;
+  scenario_count: number;
+  use_cases: HarnessConversationOverviewApiUseCasesItem[];
+  coverage: HarnessConversationOverviewApiCoverage;
+  recent_runs: HarnessConversationOverviewApiRecentRunsItem[];
+  build_changes: HarnessConversationOverviewApiBuildChangesItem[];
+  earlier_messages: HarnessConversationOverviewApiEarlierMessagesItem[];
+}
+
+export interface HarnessConversationPublishApi {
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  digest: string;
+}
+
 export interface HarnessConversationRerunApi {
   [key: string]: unknown;
 }
@@ -19089,6 +19157,64 @@ export interface HarnessConversationRunStatusApi {
   /** @minimum 0 */
   total_scenarios: number;
   receipts: HarnessConversationRunStatusApiReceipts;
+}
+
+export interface HarnessConversationRunsQueryApi {
+  /** @maxLength 64 */
+  run_id?: string;
+  /**
+   * @minimum 1
+   * @maximum 50
+   */
+  limit?: number;
+}
+
+export type HarnessConversationRunStartApiRangesItem = {
+  [key: string]: number;
+};
+
+export interface HarnessConversationRunStartApi {
+  /** @maxItems 5000 */
+  numbers?: number[];
+  /** @maxItems 100 */
+  ranges?: HarnessConversationRunStartApiRangesItem[];
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials?: number;
+  /** @maxLength 64 */
+  operation_id?: string;
+}
+
+export type HarnessConversationScenarioQueryApiRangesItem = {
+  [key: string]: number;
+};
+
+export type HarnessConversationScenarioQueryApiFilters = {
+  [key: string]: string;
+};
+
+export interface HarnessConversationScenarioQueryApi {
+  /** @maxItems 5000 */
+  numbers?: number[];
+  /** @maxItems 100 */
+  ranges?: HarnessConversationScenarioQueryApiRangesItem[];
+  /** @maxItems 500 */
+  names?: string[];
+  /** @maxItems 1000 */
+  ids?: string[];
+  /** @maxLength 500 */
+  search?: string;
+  filters?: HarnessConversationScenarioQueryApiFilters;
+  /** @minimum 1 */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  page_size?: number;
+  full?: boolean;
 }
 
 export type HarnessConversationTranscriptAppendApiEntriesItem = {
