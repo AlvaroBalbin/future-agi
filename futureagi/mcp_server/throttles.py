@@ -8,13 +8,14 @@ from django.core.cache import cache
 from rest_framework.exceptions import APIException, Throttled
 from rest_framework.throttling import SimpleRateThrottle
 
+from mcp_server.constants import (
+    DEFAULT_OAUTH_TOKEN_CLIENT_RATE,
+    DEFAULT_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT,
+    DEFAULT_OAUTH_TOKEN_INVALID_ATTEMPT_WINDOW_SECONDS,
+    DEFAULT_OAUTH_TOKEN_INVALID_LOCKOUT_SECONDS,
+    DEFAULT_OAUTH_TOKEN_IP_RATE,
+)
 from mcp_server.rate_limiter import check_sliding_window
-
-DEFAULT_OAUTH_TOKEN_IP_RATE = "30/min"
-DEFAULT_OAUTH_TOKEN_CLIENT_RATE = "10/min"
-DEFAULT_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT = 5
-DEFAULT_OAUTH_TOKEN_INVALID_ATTEMPT_WINDOW_SECONDS = 300
-DEFAULT_OAUTH_TOKEN_INVALID_LOCKOUT_SECONDS = 300
 
 
 def stable_hash(value: str, length: int | None = None) -> str:
