@@ -17,6 +17,14 @@ export const ROW_HEIGHTS = {
   "Extra Large": { lines: 0, subTasks: Infinity },
 };
 
+// Toolbar buttons stay quiet until they hold something: no border, a tint once
+// a filter is applied.
+export const scenarioToolbarButtonSx = {
+  typography: "s2", fontWeight: "fontWeightMedium", textTransform: "none",
+  color: "text.primary", px: 1.25, height: 32, minWidth: 0, whiteSpace: "nowrap", flexShrink: 0,
+  "& .MuiButton-startIcon": { mr: 0.75 },
+};
+
 export const SCENARIOS_COPY = {
   searchPlaceholder: "Search scenarios by name, task or use case…",
   addLabel: "Add scenarios",

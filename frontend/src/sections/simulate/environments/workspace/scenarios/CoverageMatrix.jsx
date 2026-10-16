@@ -8,9 +8,9 @@ import {
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import SideDrawer from "../../components/SideDrawer";
-import { toolbarButtonSx } from "./ScenarioToolbar";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import { useScenarioCoverage } from "src/api/simulate-environments/scenariosHooks";
+import { scenarioToolbarButtonSx } from "./scenarios.constants";
 
 const RED = BUILD_TONES.red;
 const GREEN = BUILD_TONES.green;
@@ -42,12 +42,12 @@ const humanize = (s) =>
 // height: hover names the three summary numbers (Axes / Pairs / Forced), and a
 // click opens the per-axis table, the forced overlays and the pairwise heatmap
 // in a right-side drawer.
-export default function CoverageMatrix({ jobId, search, filters, defaultExpanded = false }) {
+export default function CoverageMatrix({ jobId, search, filters, defaultOpen = false }) {
   // Left undefined until the user picks, so the server default (task × overlay)
   // drives the initial grid.
   const [rowAxis, setRowAxis] = useState(undefined);
   const [colAxis, setColAxis] = useState(undefined);
-  const [open, setOpen] = useState(defaultExpanded);
+  const [open, setOpen] = useState(defaultOpen);
 
   const { data, isError, isPending, refetch } = useScenarioCoverage(jobId, { search, filters, rowAxis, colAxis });
 
@@ -160,7 +160,7 @@ export default function CoverageMatrix({ jobId, search, filters, defaultExpanded
           onClick={() => setOpen(true)}
           variant="outlined"
           startIcon={mark}
-          sx={{ ...toolbarButtonSx, px: 1.75, fontWeight: "fontWeightBold", borderColor: "divider" }}
+          sx={{ ...scenarioToolbarButtonSx, px: 1.75, fontWeight: "fontWeightBold", borderColor: "divider" }}
         >
           Coverage
         </Button>
@@ -419,7 +419,7 @@ CoverageMatrix.propTypes = {
   // the filter but not the page.
   search: PropTypes.string,
   filters: PropTypes.object,
-  defaultExpanded: PropTypes.bool,
+  defaultOpen: PropTypes.bool,
 };
 
 const headerCellSx = {

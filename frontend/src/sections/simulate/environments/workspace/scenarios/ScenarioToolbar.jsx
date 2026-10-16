@@ -4,7 +4,7 @@ import { Box, Stack, Button, TextField } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { FilterPanel } from "src/components/filter-panel";
-import { SCENARIOS_COPY } from "./scenarios.constants";
+import { SCENARIOS_COPY, scenarioToolbarButtonSx } from "./scenarios.constants";
 import DisplayPanel from "./DisplayPanel";
 
 // One row holds everything until the search would shrink below ~200px; under
@@ -12,14 +12,6 @@ import DisplayPanel from "./DisplayPanel";
 // Set where the selection bar also needs two rows, so selecting never moves
 // the table.
 const SEARCH_OWN_ROW = "@container (max-width: 599px)";
-
-// Toolbar buttons stay quiet until they hold something: no border, a tint once
-// a filter is applied.
-export const toolbarButtonSx = {
-  typography: "s2", fontWeight: "fontWeightMedium", textTransform: "none",
-  color: "text.primary", px: 1.25, height: 32, minWidth: 0, whiteSpace: "nowrap", flexShrink: 0,
-  "& .MuiButton-startIcon": { mr: 0.75 },
-};
 
 // Shared toolbar for both scenario views: search, the platform FilterPanel and a
 // Display panel holding the view, the group-by axis and the row height. Lifting
@@ -72,7 +64,7 @@ export default function ScenarioToolbar({
             onClick={(e) => setFilterAnchor(e.currentTarget)}
             startIcon={<Iconify icon="mdi:filter-outline" width={16} />}
             sx={{
-              ...toolbarButtonSx,
+              ...scenarioToolbarButtonSx,
               ...(filterCount > 0 && { color: "primary.main", bgcolor: "action.selected" }),
             }}
           >
@@ -83,7 +75,7 @@ export default function ScenarioToolbar({
             aria-expanded={!!displayAnchor}
             onClick={(e) => setDisplayAnchor(e.currentTarget)}
             startIcon={<Iconify icon="mdi:tune-vertical" width={16} />}
-            sx={toolbarButtonSx}
+            sx={scenarioToolbarButtonSx}
           >
             {SCENARIOS_COPY.displayLabel}
           </Button>
