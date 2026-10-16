@@ -160,6 +160,25 @@ const gridRows = (page: Page, colId: string | null) =>
     : page.locator(`.clean-data-table:visible .ag-row[row-id] [col-id="${colId}"]`)
       .evaluateAll((cells) => cells.map((c) => (c.textContent ?? '').trim()).sort());
 
+// A long window over a busy stack can stop at the backend's scan budget
+// (`scan_budget_exceeded`); the cursor pager then shows "Preparing exact
+// results" with a Continue search button instead of rows
+// (LLMTracing/ListCursorContinuationNotice.jsx, and the Users grid's own).
+// Press it as a user would, a bounded number of times per step, so the row
+// check reads the finished result rather than the paused one.
+const MAX_CONTINUE_CLICKS = 10;
+const readRows = async (
+  page: Page, colId: string | null, keep: (row: string) => boolean, state: { clicks: number },
+) => {
+  const resume = page.getByRole('button', { name: 'Continue search', exact: true })
+    .filter({ visible: true });
+  if (state.clicks < MAX_CONTINUE_CLICKS && (await resume.count()) > 0) {
+    state.clicks += 1;
+    await resume.first().click();
+  }
+  return (await gridRows(page, colId)).filter(keep);
+};
+
 type Seeded = {
   projectId: string; today: SeededTrace; yesterday: SeededTrace;
   // The curated session ids, which the Sessions grid uses as row-id; the
@@ -324,7 +343,8 @@ async function openListView(page: Page, opts: {
         .toContainEqual(requestWindow(r));
     }
   }
-  await expect.poll(async () => (await gridRows(page, colId)).filter(keep), { timeout: UI_READY })
+  const resumes = { clicks: 0 };
+  await expect.poll(() => readRows(page, colId, keep, resumes), { timeout: UI_READY })
     .toEqual([...rows[view.option]].sort());
 }
 
@@ -362,7 +382,8 @@ async function openBookmark(page: Page, opts: {
         .toContainEqual(requestWindow(r));
     }
   }
-  await expect.poll(async () => (await gridRows(page, colId)).filter(keep), { timeout: UI_READY })
+  const resumes = { clicks: 0 };
+  await expect.poll(() => readRows(page, colId, keep, resumes), { timeout: UI_READY })
     .toEqual([...rows[option]].sort());
 }
 
@@ -730,7 +751,8 @@ for (const surface of [
           await expect.poll(sent, { timeout: UI_READY }).toContainEqual(toIso(stored));
           if (surface.kind === 'list') {
             for (const w of sent()) expect(w).toEqual(toIso(stored));
-            await expect.poll(() => gridRows(page, surface.colId), { timeout: UI_READY })
+            const resumes = { clicks: 0 };
+            await expect.poll(() => readRows(page, surface.colId, () => true, resumes), { timeout: UI_READY })
               .toEqual([]);
           }
           return;
@@ -756,7 +778,8 @@ for (const surface of [
         for (const w of sent()) {
           expect(candidates.map((c) => c.iso), `request window for ${option}`).toContainEqual(w);
         }
-        await expect.poll(() => gridRows(page, surface.colId), { timeout: UI_READY })
+        const resumes = { clicks: 0 };
+        await expect.poll(() => readRows(page, surface.colId, () => true, resumes), { timeout: UI_READY })
           .toEqual([...rows[option]].sort());
       });
     }
