@@ -193,6 +193,7 @@ def recover_stalled_conversations(
             heartbeat_at__gt=now - timedelta(seconds=RUNTIME_START_SECONDS),
         )
     )
+    session_builds = getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)
     candidates = list(
         HostedHarnessConversation.no_workspace_objects.select_related("job").annotate(
             outstanding=Exists(unacked),
@@ -206,7 +207,11 @@ def recover_stalled_conversations(
         .filter(
             Q(outstanding=True)
             | Q(state__in=_ACTIVE_CONVERSATION_STATES)
-            | (Q(job__environment__isnull=True) & ~Q(job__state__in=_TERMINAL_JOB_STATES))
+            | (
+                Q(job__environment__isnull=True) & ~Q(job__state__in=_TERMINAL_JOB_STATES)
+                if session_builds
+                else Q(pk__in=[])
+            )
         )
         .filter(healthy=False)
         .filter(
@@ -235,7 +240,8 @@ def recover_stalled_conversations(
             continue
         # While its environment is being built, the harness is the build: bring it back.
         building = (
-            candidate.job.environment_id is None
+            session_builds
+            and candidate.job.environment_id is None
             and candidate.job.state not in _TERMINAL_JOB_STATES
         )
         if not candidate.outstanding and not building:
@@ -628,6 +634,7 @@ def build_turn_context(conversation: HostedHarnessConversation) -> dict[str, Any
         "capabilities": {
             "policy_hash": conversation.policy_hash,
             "control_only": bool(lease and lease.control_only),
+            "builder_session": bool(getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)),
         },
         "event_watermark": conversation.event_acked_through,
         "command_watermark": conversation.command_acked_through,

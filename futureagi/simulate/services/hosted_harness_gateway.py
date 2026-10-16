@@ -440,8 +440,43 @@ def _add_scoped_guest_pin_policy(values: dict[str, str], job: HostedHarnessJob) 
     return True
 
 
-def _adjustment_stage(current_stage: str) -> str:
-    """The stage running now, for a change that does not name the stage it belongs to."""
+def _scenario_delta(instruction: str) -> int | None:
+    number_words = {
+        "one": 1,
+        "two": 2,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+        "seven": 7,
+        "eight": 8,
+        "nine": 9,
+        "ten": 10,
+    }
+    match = re.search(
+        r"\b(?:add|create|generate|write)\s+"
+        r"(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten)\s+"
+        r"(?:more\s+)?scenarios?\b",
+        instruction,
+        re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    value = match.group(1).lower()
+    return min(100, int(value) if value.isdigit() else number_words[value])
+
+
+def _adjustment_stage(instruction: str, current_stage: str) -> str:
+    lowered = instruction.lower()
+    if any(word in lowered for word in ("scenario", "persona", "test case")):
+        return "scenarios"
+    if any(
+        word in lowered
+        for word in ("environment", "database", "service", "seed", "test data")
+    ):
+        return "environment"
+    if any(word in lowered for word in ("contract", "tool", "capability")):
+        return "understand"
     return {
         "understanding_agent": "understand",
         "generating_environment": "environment",
@@ -2992,7 +3027,7 @@ class HostedHarnessGateway:
                 if existing is not None:
                     return locked
 
-            delta = request.get("scenario_delta")
+            delta = request.get("scenario_delta") or _scenario_delta(instruction)
             if delta and locked.scenario_count + delta > MAX_SCENARIOS_PER_JOB:
                 raise HostedHarnessError(
                     "scenario_limit_exceeded",
@@ -3004,7 +3039,7 @@ class HostedHarnessGateway:
                 "client_request_id": client_request_id,
                 "instruction": instruction,
                 "target_stage": request.get("target_stage")
-                or _adjustment_stage(locked.current_stage),
+                or _adjustment_stage(instruction, locked.current_stage),
                 "scenario_delta": delta,
                 "status": "pending",
                 "created_at": timezone.now().isoformat(),
