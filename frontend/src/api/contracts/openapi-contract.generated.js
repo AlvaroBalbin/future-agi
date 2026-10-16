@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1059,
+  endpointCount: 1064,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28793,6 +28793,44 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness/conversations/{id}/overview/": {
+      post: {
+        operationId: "simulate_api_harness_conversations_overview",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessConversationOverviewQuery",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessConversationOverview",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness/conversations/{id}/publish/": {
+      post: {
+        operationId: "simulate_api_harness_conversations_publish",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: false,
+        requestBody: {
+          $ref: "#/definitions/HarnessConversationPublish",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/HarnessConversationPublish",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness/conversations/{id}/rerun/": {
       post: {
         operationId: "simulate_api_harness_conversations_rerun",
@@ -28822,6 +28860,63 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessConversationRunStatus",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness/conversations/{id}/runs/": {
+      post: {
+        operationId: "simulate_api_harness_conversations_runs",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: false,
+        requestBody: {
+          $ref: "#/definitions/HarnessConversationRunsQuery",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/HarnessConversationRunsQuery",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness/conversations/{id}/runs/start/": {
+      post: {
+        operationId: "simulate_api_harness_conversations_runs_start_run",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: false,
+        requestBody: {
+          $ref: "#/definitions/HarnessConversationRunStart",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/HarnessConversationRunStart",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness/conversations/{id}/scenarios/": {
+      post: {
+        operationId: "simulate_api_harness_conversations_scenarios",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: false,
+        requestBody: {
+          $ref: "#/definitions/HarnessConversationScenarioQuery",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/HarnessConversationScenarioQuery",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -62295,6 +62390,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxLength: 128,
           minLength: 1,
         },
+        target_stage: {
+          title: "Target stage",
+          type: "string",
+          enum: ["understand", "environment", "scenarios"],
+        },
+        scenario_delta: {
+          title: "Scenario delta",
+          type: "integer",
+          minimum: 1,
+        },
       },
     },
     HarnessConversationAdjustmentResponse: {
@@ -62419,6 +62524,96 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessConversationOverview: {
+      required: [
+        "environment",
+        "scenario_count",
+        "use_cases",
+        "coverage",
+        "recent_runs",
+        "build_changes",
+        "earlier_messages",
+      ],
+      type: "object",
+      properties: {
+        environment: {
+          title: "Environment",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        scenario_count: {
+          title: "Scenario count",
+          type: "integer",
+        },
+        use_cases: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        coverage: {
+          title: "Coverage",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        recent_runs: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        build_changes: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        earlier_messages: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+      },
+    },
+    HarnessConversationOverviewQuery: {
+      type: "object",
+      properties: {},
+    },
+    HarnessConversationPublish: {
+      required: ["digest"],
+      type: "object",
+      properties: {
+        digest: {
+          title: "Digest",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+      },
+    },
     HarnessConversationRead: {
       required: [
         "conversation_id",
@@ -62492,6 +62687,42 @@ export const OPENAPI_CONTRACT = Object.freeze({
       type: "object",
       properties: {},
     },
+    HarnessConversationRunStart: {
+      type: "object",
+      properties: {
+        numbers: {
+          type: "array",
+          items: {
+            type: "integer",
+            minimum: 1,
+          },
+          maxItems: 5000,
+        },
+        ranges: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "integer",
+              minimum: 1,
+            },
+          },
+          maxItems: 100,
+        },
+        trials: {
+          title: "Trials",
+          type: "integer",
+          default: 1,
+          maximum: 20,
+          minimum: 1,
+        },
+        operation_id: {
+          title: "Operation id",
+          type: "string",
+          maxLength: 64,
+        },
+      },
+    },
     HarnessConversationRunStatus: {
       required: [
         "job_id",
@@ -62537,6 +62768,93 @@ export const OPENAPI_CONTRACT = Object.freeze({
         receipts: {
           title: "Receipts",
           type: "object",
+        },
+      },
+    },
+    HarnessConversationRunsQuery: {
+      type: "object",
+      properties: {
+        run_id: {
+          title: "Run id",
+          type: "string",
+          maxLength: 64,
+        },
+        limit: {
+          title: "Limit",
+          type: "integer",
+          maximum: 50,
+          minimum: 1,
+        },
+      },
+    },
+    HarnessConversationScenarioQuery: {
+      type: "object",
+      properties: {
+        numbers: {
+          type: "array",
+          items: {
+            type: "integer",
+            minimum: 1,
+          },
+          maxItems: 5000,
+        },
+        ranges: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "integer",
+              minimum: 1,
+            },
+          },
+          maxItems: 100,
+        },
+        names: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 500,
+        },
+        ids: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 64,
+            minLength: 1,
+          },
+          maxItems: 1000,
+        },
+        search: {
+          title: "Search",
+          type: "string",
+          maxLength: 500,
+        },
+        filters: {
+          title: "Filters",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        page: {
+          title: "Page",
+          type: "integer",
+          minimum: 1,
+        },
+        page_size: {
+          title: "Page size",
+          type: "integer",
+          maximum: 100,
+          minimum: 1,
+        },
+        full: {
+          title: "Full",
+          type: "boolean",
+          default: false,
         },
       },
     },
@@ -63021,6 +63339,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           maxLength: 128,
           minLength: 1,
+        },
+        target_stage: {
+          title: "Target stage",
+          type: "string",
+          enum: ["understand", "environment", "scenarios"],
+        },
+        scenario_delta: {
+          title: "Scenario delta",
+          type: "integer",
+          minimum: 1,
         },
       },
     },

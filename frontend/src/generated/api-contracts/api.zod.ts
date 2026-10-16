@@ -37342,6 +37342,8 @@ export const SimulateApiHarnessJobsAdjustBody = zod.object({
     .min(1)
     .max(simulateApiHarnessJobsAdjustBodyClientRequestIdMax)
     .optional(),
+  target_stage: zod.enum(["understand", "environment", "scenarios"]).optional(),
+  scenario_delta: zod.number().min(1).optional(),
 });
 
 /**
@@ -38293,6 +38295,8 @@ export const SimulateApiHarnessConversationsAdjustBody = zod.object({
     .min(1)
     .max(simulateApiHarnessConversationsAdjustBodyClientRequestIdMax)
     .optional(),
+  target_stage: zod.enum(["understand", "environment", "scenarios"]).optional(),
+  scenario_delta: zod.number().min(1).optional(),
 });
 
 export const SimulateApiHarnessConversationsAdjustResponse = zod.object({
@@ -38403,6 +38407,37 @@ export const SimulateApiHarnessConversationsEventsResponse = zod.object({
     .min(simulateApiHarnessConversationsEventsResponseAckedThroughSequenceMin),
 });
 
+export const SimulateApiHarnessConversationsOverviewParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiHarnessConversationsOverviewBody = zod
+  .object({})
+  .passthrough();
+
+export const SimulateApiHarnessConversationsOverviewResponse = zod.object({
+  environment: zod.record(zod.string(), zod.string()),
+  scenario_count: zod.number(),
+  use_cases: zod.array(zod.record(zod.string(), zod.string())),
+  coverage: zod.record(zod.string(), zod.string()),
+  recent_runs: zod.array(zod.record(zod.string(), zod.string())),
+  build_changes: zod.array(zod.record(zod.string(), zod.string())),
+  earlier_messages: zod.array(zod.record(zod.string(), zod.string())),
+});
+
+export const SimulateApiHarnessConversationsPublishParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessConversationsPublishBodyDigestMax = 128;
+
+export const SimulateApiHarnessConversationsPublishBody = zod.object({
+  digest: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessConversationsPublishBodyDigestMax),
+});
+
 export const SimulateApiHarnessConversationsRerunParams = zod.object({
   id: zod.string(),
 });
@@ -38435,6 +38470,124 @@ export const SimulateApiHarnessConversationsRunStatusResponse = zod.object({
     .number()
     .min(simulateApiHarnessConversationsRunStatusResponseTotalScenariosMin),
   receipts: zod.object({}).passthrough(),
+});
+
+export const SimulateApiHarnessConversationsRunsParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessConversationsRunsBodyRunIdMax = 64;
+
+export const simulateApiHarnessConversationsRunsBodyLimitMax = 50;
+
+export const SimulateApiHarnessConversationsRunsBody = zod.object({
+  run_id: zod
+    .string()
+    .max(simulateApiHarnessConversationsRunsBodyRunIdMax)
+    .optional(),
+  limit: zod
+    .number()
+    .min(1)
+    .max(simulateApiHarnessConversationsRunsBodyLimitMax)
+    .optional(),
+});
+
+export const SimulateApiHarnessConversationsRunsStartRunParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessConversationsRunsStartRunBodyNumbersMax = 5000;
+
+export const simulateApiHarnessConversationsRunsStartRunBodyRangesMax = 100;
+
+export const simulateApiHarnessConversationsRunsStartRunBodyTrialsDefault = 1;
+export const simulateApiHarnessConversationsRunsStartRunBodyTrialsMax = 20;
+
+export const simulateApiHarnessConversationsRunsStartRunBodyOperationIdMax = 64;
+
+export const SimulateApiHarnessConversationsRunsStartRunBody = zod.object({
+  numbers: zod
+    .array(zod.number().min(1))
+    .max(simulateApiHarnessConversationsRunsStartRunBodyNumbersMax)
+    .optional(),
+  ranges: zod
+    .array(zod.record(zod.string(), zod.number().min(1)))
+    .max(simulateApiHarnessConversationsRunsStartRunBodyRangesMax)
+    .optional(),
+  trials: zod
+    .number()
+    .min(1)
+    .max(simulateApiHarnessConversationsRunsStartRunBodyTrialsMax)
+    .default(simulateApiHarnessConversationsRunsStartRunBodyTrialsDefault),
+  operation_id: zod
+    .string()
+    .max(simulateApiHarnessConversationsRunsStartRunBodyOperationIdMax)
+    .optional(),
+});
+
+export const SimulateApiHarnessConversationsScenariosParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessConversationsScenariosBodyNumbersMax = 5000;
+
+export const simulateApiHarnessConversationsScenariosBodyRangesMax = 100;
+
+export const simulateApiHarnessConversationsScenariosBodyNamesItemMax = 255;
+
+export const simulateApiHarnessConversationsScenariosBodyNamesMax = 500;
+
+export const simulateApiHarnessConversationsScenariosBodyIdsItemMax = 64;
+
+export const simulateApiHarnessConversationsScenariosBodyIdsMax = 1000;
+
+export const simulateApiHarnessConversationsScenariosBodySearchMax = 500;
+
+export const simulateApiHarnessConversationsScenariosBodyPageSizeMax = 100;
+
+export const simulateApiHarnessConversationsScenariosBodyFullDefault = false;
+
+export const SimulateApiHarnessConversationsScenariosBody = zod.object({
+  numbers: zod
+    .array(zod.number().min(1))
+    .max(simulateApiHarnessConversationsScenariosBodyNumbersMax)
+    .optional(),
+  ranges: zod
+    .array(zod.record(zod.string(), zod.number().min(1)))
+    .max(simulateApiHarnessConversationsScenariosBodyRangesMax)
+    .optional(),
+  names: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessConversationsScenariosBodyNamesItemMax),
+    )
+    .max(simulateApiHarnessConversationsScenariosBodyNamesMax)
+    .optional(),
+  ids: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessConversationsScenariosBodyIdsItemMax),
+    )
+    .max(simulateApiHarnessConversationsScenariosBodyIdsMax)
+    .optional(),
+  search: zod
+    .string()
+    .max(simulateApiHarnessConversationsScenariosBodySearchMax)
+    .optional(),
+  filters: zod.record(zod.string(), zod.string()).optional(),
+  page: zod.number().min(1).optional(),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(simulateApiHarnessConversationsScenariosBodyPageSizeMax)
+    .optional(),
+  full: zod
+    .boolean()
+    .default(simulateApiHarnessConversationsScenariosBodyFullDefault),
 });
 
 export const SimulateApiHarnessConversationsSessionStoreParams = zod.object({

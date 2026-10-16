@@ -892,6 +892,15 @@ def provision_scenarios(
             "persona scenario_key values must be unique",
             status_code=400,
         )
+    if (
+        len(persona_keys) != job.scenario_count
+        and job.environment_id is None
+        and job.test_execution_id is None
+    ):
+        # A build holds what its harness built; the count it was asked for was the starting brief.
+        job.scenario_count = len(persona_keys)
+        job.payload = {**(job.payload or {}), "scenario_count": len(persona_keys)}
+        job.save(update_fields=["scenario_count", "payload", "updated_at"])
     if len(persona_keys) != job.scenario_count:
         raise HostedHarnessError(
             "scenario_count_mismatch",
