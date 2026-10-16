@@ -184,18 +184,31 @@ describe("mapCallRow", () => {
           value: null,
           reason: "No transcript data available",
         },
+        {
+          id: "e-timeout",
+          status: "timed_out",
+          score: null,
+          value: null,
+          reason: "Scoring timed out: no progress for 10 minutes.",
+        },
         { id: "e-ok", score: 1, value: "Passed" },
       ],
     };
-    const [failed, skipped, ok] = mapCallRow(row, [
+    const [failed, skipped, timedOut, ok] = mapCallRow(row, [
       { id: "e-failed" },
       { id: "e-skip" },
+      { id: "e-timeout" },
       { id: "e-ok" },
     ]).evalResults;
     expect(failed.status).toBe("failed");
     expect(failed.reason).toBe("Timed out");
     expect(skipped.status).toBe("skipped");
-    expect(ok.status).toBe("completed");
+    expect(timedOut.status).toBe("timed_out");
+    expect(timedOut.reason).toBe(
+      "Scoring timed out: no progress for 10 minutes.",
+    );
+    // An entry with no status reads as scored, in the API's own word.
+    expect(ok.status).toBe("succeeded");
   });
 
   it("keeps the server's verdict on a choice and the score of a label-less object", () => {

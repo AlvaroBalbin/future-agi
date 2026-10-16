@@ -47234,12 +47234,18 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
     zod.object({
       id: zod.string().min(1),
       name: zod.string().min(1),
-      type: zod.string().min(1),
+      type: zod.string(),
       value: zod.object({}).passthrough(),
       score: zod.number(),
       passed: zod.boolean(),
       reason: zod.string(),
-      status: zod.string().min(1),
+      status: zod.enum([
+        "pending",
+        "succeeded",
+        "failed",
+        "timed_out",
+        "skipped",
+      ]),
     }),
   ),
   function_calls: zod.array(
@@ -47253,6 +47259,22 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       start_time_ms: zod.number().optional(),
     }),
   ),
+  scoring_status: zod.enum([
+    "not_applicable",
+    "pending",
+    "succeeded",
+    "failed",
+    "timed_out",
+  ]),
+  csat_status: zod.enum([
+    "not_applicable",
+    "pending",
+    "succeeded",
+    "failed",
+    "timed_out",
+    "skipped",
+  ]),
+  csat_reason: zod.string().min(1),
 });
 
 export const SimulateV3TestExecutionAnalyticsParams = zod.object({
@@ -47981,6 +48003,16 @@ export const simulateV3TestExecutionCallsResponseExecutionSelectedScenarioKeysDe
   [];
 export const simulateV3TestExecutionCallsResponseExecutionTrialsDefault = 1;
 
+export const simulateV3TestExecutionCallsResponseSummaryScoringNotApplicableMin = 0;
+
+export const simulateV3TestExecutionCallsResponseSummaryScoringPendingMin = 0;
+
+export const simulateV3TestExecutionCallsResponseSummaryScoringSucceededMin = 0;
+
+export const simulateV3TestExecutionCallsResponseSummaryScoringFailedMin = 0;
+
+export const simulateV3TestExecutionCallsResponseSummaryScoringTimedOutMin = 0;
+
 export const SimulateV3TestExecutionCallsResponse = zod.object({
   execution: zod.object({
     id: zod.string().uuid(),
@@ -48111,6 +48143,25 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       total: zod.number(),
       total_value: zod.number(),
     }),
+    scoring: zod.object({
+      not_applicable: zod
+        .number()
+        .min(
+          simulateV3TestExecutionCallsResponseSummaryScoringNotApplicableMin,
+        ),
+      pending: zod
+        .number()
+        .min(simulateV3TestExecutionCallsResponseSummaryScoringPendingMin),
+      succeeded: zod
+        .number()
+        .min(simulateV3TestExecutionCallsResponseSummaryScoringSucceededMin),
+      failed: zod
+        .number()
+        .min(simulateV3TestExecutionCallsResponseSummaryScoringFailedMin),
+      timed_out: zod
+        .number()
+        .min(simulateV3TestExecutionCallsResponseSummaryScoringTimedOutMin),
+    }),
   }),
   count: zod.number(),
   page: zod.number(),
@@ -48180,14 +48231,36 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         zod.object({
           id: zod.string().min(1),
           name: zod.string().min(1),
-          type: zod.string().min(1),
+          type: zod.string(),
           value: zod.object({}).passthrough(),
           score: zod.number(),
           passed: zod.boolean(),
           reason: zod.string(),
-          status: zod.string().min(1),
+          status: zod.enum([
+            "pending",
+            "succeeded",
+            "failed",
+            "timed_out",
+            "skipped",
+          ]),
         }),
       ),
+      scoring_status: zod.enum([
+        "not_applicable",
+        "pending",
+        "succeeded",
+        "failed",
+        "timed_out",
+      ]),
+      csat_status: zod.enum([
+        "not_applicable",
+        "pending",
+        "succeeded",
+        "failed",
+        "timed_out",
+        "skipped",
+      ]),
+      csat_reason: zod.string().min(1),
     }),
   ),
   groups: zod.array(
