@@ -10,6 +10,7 @@ from collections.abc import Iterator
 from itertools import islice
 from typing import Any
 
+from django.db.models import QuerySet
 from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -45,6 +46,8 @@ from simulate.services.run_results_v3_queries import (
     run_call_rows_queryset,
     run_calls_queryset,
 )
+from simulate.services.run_results_v3_scan import scan_call_values
+from simulate.services.run_results_v3_scoring import LiveEvals, live_eval_specs
 from simulate.services.scoring_status import (
     CSAT_STATUSES,
     EVAL_STATUSES,
@@ -101,7 +104,16 @@ class RunCallFiltersSerializer(serializers.Serializer):
     )
 
     def validate_filters(self, value):
-        allowed = {"goal", "sub_goal", "status", "goal_outcome", "call_execution_id"}
+        allowed = {
+            "goal",
+            "goal_not",
+            "sub_goal",
+            "sub_goal_not",
+            "status",
+            "status_not",
+            "goal_outcome",
+            "call_execution_id",
+        }
         unknown = set(value) - allowed
         if unknown:
             raise serializers.ValidationError(
@@ -114,7 +126,10 @@ class RunCallFiltersSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     f"Filter '{field}' must be a list of strings."
                 )
-        invalid_statuses = set(value.get("status", [])) - set(OUTCOME_LABELS)
+        invalid_statuses = {
+            *value.get("status", []),
+            *value.get("status_not", []),
+        } - set(OUTCOME_LABELS)
         if invalid_statuses:
             raise serializers.ValidationError(
                 f"Unsupported statuses: {', '.join(sorted(invalid_statuses))}."
@@ -345,6 +360,8 @@ class RunCallsV3ResponseSerializer(serializers.Serializer):
     results = RunCallSerializer(many=True)
     groups = RunGroupSerializer(many=True)
     facets = RunFacetsSerializer()
+    # Outcome counts under every filter but the status ones, for the status chips.
+    status_counts = OutcomeCountsSerializer()
     evaluation_columns = EvaluationColumnSerializer(many=True)
 
 
@@ -562,6 +579,39 @@ def _execution_payload(
     }
 
 
+def _facet_rows(
+    calls_page: dict[str, Any],
+    execution: TestExecution,
+    call_ids: list[str] | None,
+    live_evals: LiveEvals,
+) -> list[dict[str, Any]]:
+    """The run's call values, narrowed to a hand-off's calls.
+
+    Cached page rows can lag the calls, so facets scan them unless this
+    request already read them.
+    """
+    if not calls_page["execution_rows_fresh"]:
+        return scan_call_values(
+            execution,
+            [],
+            live_evals=live_evals,
+            call_ids=call_ids or None,
+            scoring=False,
+        )
+    rows = calls_page["execution_rows"]
+    if not call_ids:
+        return rows
+    scoped = {str(uuid.UUID(call_id)) for call_id in call_ids}
+    return [row for row in rows if row["id"] in scoped]
+
+
+def _facet_calls(
+    execution: TestExecution, call_ids: list[str] | None
+) -> QuerySet[CallExecution]:
+    calls = CallExecution.objects.filter(test_execution=execution)
+    return calls.filter(id__in=call_ids) if call_ids else calls
+
+
 class RunCallsV3View(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -576,35 +626,40 @@ class RunCallsV3View(APIView):
         page = query["page"]
         page_size = query["page_size"]
 
+        live_evals = live_eval_specs(execution.run_test_id)
+
         @functools.cache
         def base_queryset():
-            return run_calls_queryset(execution)
+            return run_calls_queryset(execution, live_evals=live_evals)
 
         columns, live_eval_ids = build_evaluation_catalog(execution)
-        calls_page = run_calls_page(execution, query, columns, base_queryset)
+        calls_page = run_calls_page(
+            execution, query, columns, base_queryset, live_evals
+        )
         count = calls_page["count"]
         # One clock and one runnable set per request, shared by the rows and the
         # scoring counts. A finished run's pass can be minutes old, but it holds
         # stored state only, so both still read the scoring clocks as of now.
         now = timezone.now()
-        runnable_ids = set(runnable_eval_config_ids(execution.run_test_id))
+        # The live configs are loaded once per request; a runnable one has a
+        # mapping, as ``runnable_eval_config_ids`` reads it.
+        runnable_ids = {
+            eval_id for eval_id, live in live_evals.items() if live.config.mapping
+        }
         page_rows, columns = build_call_rows(
             execution,
-            page_calls(calls_page),
+            page_calls(calls_page, execution),
             columns,
             live_eval_ids,
+            live_evals,
             runnable_ids=runnable_ids,
             now=now,
         )
         facets_cache_key = None
         # Facets span the whole run so filter options never vanish, except under
         # a hand-off of specific calls, which scopes the counts too.
-        facet_queryset = base_queryset
-        if call_ids := (query.get("filters") or {}).get("call_execution_id"):
-            facet_queryset = apply_run_call_query(
-                base_queryset(), {"filters": {"call_execution_id": call_ids}}
-            )
-        elif execution.status == TestExecution.ExecutionStatus.COMPLETED:
+        call_ids = (query.get("filters") or {}).get("call_execution_id")
+        if not call_ids and execution.status == TestExecution.ExecutionStatus.COMPLETED:
             version = execution.completed_at or execution.updated_at
             # A deleted call moves the run's total and nothing else in this key.
             facets_cache_key = (
@@ -632,8 +687,15 @@ class RunCallsV3View(APIView):
             "page_size": page_size,
             "total_pages": max(1, (count + page_size - 1) // page_size),
             "results": page_rows,
-            "groups": page_groups(execution, calls_page, query, columns, base_queryset),
-            "facets": run_call_facets(facet_queryset, facets_cache_key),
+            "groups": page_groups(
+                execution, calls_page, query, columns, base_queryset, live_evals
+            ),
+            "facets": run_call_facets(
+                lambda: _facet_rows(calls_page, execution, call_ids, live_evals),
+                lambda: _facet_calls(execution, call_ids),
+                facets_cache_key,
+            ),
+            "status_counts": calls_page["status_counts"],
             "evaluation_columns": columns,
         }
         return Response(response)

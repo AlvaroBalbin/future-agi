@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1058,
+  endpointCount: 1059,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -26177,6 +26177,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           state: {
             required: false,
+            schema: {
+              type: "string",
+            },
+          },
+        },
+        responses: {
+          400: {
+            $ref: "#/definitions/SAMLErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/saml2_auth/complete/": {
+      get: {
+        operationId: "saml2_auth_complete_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {
+          c: {
+            required: true,
             schema: {
               type: "string",
             },
@@ -72910,6 +72934,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "results",
         "groups",
         "facets",
+        "status_counts",
         "evaluation_columns",
       ],
       type: "object",
@@ -72950,6 +72975,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         facets: {
           $ref: "#/definitions/RunFacets",
+        },
+        status_counts: {
+          $ref: "#/definitions/OutcomeCounts",
         },
         evaluation_columns: {
           type: "array",
@@ -99276,6 +99304,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    OutcomeCounts: {
+      required: [
+        "queued",
+        "in_progress",
+        "passed",
+        "failed",
+        "error",
+        "inconclusive",
+      ],
+      type: "object",
+      properties: {
+        queued: {
+          title: "Queued",
+          type: "integer",
+        },
+        in_progress: {
+          title: "In progress",
+          type: "integer",
+        },
+        passed: {
+          title: "Passed",
+          type: "integer",
+        },
+        failed: {
+          title: "Failed",
+          type: "integer",
+        },
+        error: {
+          title: "Error",
+          type: "integer",
+        },
+        inconclusive: {
+          title: "Inconclusive",
+          type: "integer",
+        },
+      },
+    },
     RunCall: {
       required: [
         "id",
@@ -112414,43 +112479,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         total: {
           title: "Total",
-          type: "integer",
-        },
-      },
-    },
-    OutcomeCounts: {
-      required: [
-        "queued",
-        "in_progress",
-        "passed",
-        "failed",
-        "error",
-        "inconclusive",
-      ],
-      type: "object",
-      properties: {
-        queued: {
-          title: "Queued",
-          type: "integer",
-        },
-        in_progress: {
-          title: "In progress",
-          type: "integer",
-        },
-        passed: {
-          title: "Passed",
-          type: "integer",
-        },
-        failed: {
-          title: "Failed",
-          type: "integer",
-        },
-        error: {
-          title: "Error",
-          type: "integer",
-        },
-        inconclusive: {
-          title: "Inconclusive",
           type: "integer",
         },
       },

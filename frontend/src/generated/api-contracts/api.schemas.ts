@@ -23247,6 +23247,7 @@ export interface RunCallsV3ResponseApi {
   results: RunCallApi[];
   groups: RunGroupApi[];
   facets: RunFacetsApi;
+  status_counts: OutcomeCountsApi;
   evaluation_columns: EvaluationColumnApi[];
 }
 
@@ -34539,6 +34540,13 @@ export type Saml2AuthAuthCallbackListParams = {
 export type Saml2AuthAuthReadParams = {
   code?: string;
   state?: string;
+};
+
+export type Saml2AuthCompleteListParams = {
+  /**
+   * One-time SAML response candidate key.
+   */
+  c: string;
 };
 
 export type Saml2AuthGithubCallbackListParams = {

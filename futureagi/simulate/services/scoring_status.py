@@ -353,13 +353,23 @@ def _eval_entries(raw: Any) -> dict[str, Mapping[str, Any]]:
     return {str(key): entry for key, entry in raw.items() if isinstance(entry, dict)}
 
 
-def scoring_input_from_call(call: CallExecution) -> ScoringInput:
+_UNSET: Any = object()
+
+
+def scoring_input_from_call(
+    call: CallExecution, metadata: Any = _UNSET
+) -> ScoringInput:
+    """The scoring input of a loaded call.
+
+    ``metadata`` stands in for ``call.call_metadata`` when the caller loaded
+    only a subset of it that holds ``SCORING_META_KEYS``.
+    """
     metrics = call.conversation_metrics_data
     metrics = metrics if isinstance(metrics, dict) else {}
     csat_scored = metrics.get("csat_score") is not None
     return ScoringInput(
         call_status=str(call.status),
-        metadata=_scoring_meta(call.call_metadata),
+        metadata=_scoring_meta(call.call_metadata if metadata is _UNSET else metadata),
         eval_entries=_eval_entries(call.eval_outputs),
         csat_scored=csat_scored,
         has_csat_value=csat_scored or call.overall_score is not None,
@@ -625,6 +635,20 @@ _SCORING_OUTPUTS_SQL = (
 _SCORING_CSAT_SQL = f"{_column('conversation_metrics_data')} -> 'csat_score'"
 
 
+# What ``scoring_values`` adds to each row besides ``id``: the fields
+# ``scoring_input_from_values`` reads.
+SCORING_ROW_FIELDS = (
+    "status",
+    "created_at",
+    "completed_at",
+    "ended_at",
+    "overall_score",
+    "scoring_meta",
+    "scoring_outputs",
+    "scoring_csat",
+)
+
+
 def scoring_values(queryset: QuerySet, *extra_fields: str) -> QuerySet:
     """The reduced projection the counts and the sweeper read, one dict per call.
 
@@ -635,18 +659,7 @@ def scoring_values(queryset: QuerySet, *extra_fields: str) -> QuerySet:
         scoring_meta=RawSQL(_SCORING_META_SQL, (), output_field=JSONField()),
         scoring_outputs=RawSQL(_SCORING_OUTPUTS_SQL, (), output_field=JSONField()),
         scoring_csat=RawSQL(_SCORING_CSAT_SQL, (), output_field=JSONField()),
-    ).values(
-        "id",
-        "status",
-        "created_at",
-        "completed_at",
-        "ended_at",
-        "overall_score",
-        "scoring_meta",
-        "scoring_outputs",
-        "scoring_csat",
-        *extra_fields,
-    )
+    ).values("id", *SCORING_ROW_FIELDS, *extra_fields)
 
 
 @dataclass(frozen=True)
