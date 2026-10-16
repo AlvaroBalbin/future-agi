@@ -19183,6 +19183,8 @@ export interface HarnessConversationRunStartApi {
    * @maximum 20
    */
   trials?: number;
+  /** @maxLength 64 */
+  operation_id?: string;
 }
 
 export type HarnessConversationScenarioQueryApiRangesItem = {

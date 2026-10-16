@@ -38503,6 +38503,8 @@ export const simulateApiHarnessConversationsRunsStartRunBodyRangesMax = 100;
 export const simulateApiHarnessConversationsRunsStartRunBodyTrialsDefault = 1;
 export const simulateApiHarnessConversationsRunsStartRunBodyTrialsMax = 20;
 
+export const simulateApiHarnessConversationsRunsStartRunBodyOperationIdMax = 64;
+
 export const SimulateApiHarnessConversationsRunsStartRunBody = zod.object({
   numbers: zod
     .array(zod.number().min(1))
@@ -38517,6 +38519,10 @@ export const SimulateApiHarnessConversationsRunsStartRunBody = zod.object({
     .min(1)
     .max(simulateApiHarnessConversationsRunsStartRunBodyTrialsMax)
     .default(simulateApiHarnessConversationsRunsStartRunBodyTrialsDefault),
+  operation_id: zod
+    .string()
+    .max(simulateApiHarnessConversationsRunsStartRunBodyOperationIdMax)
+    .optional(),
 });
 
 export const SimulateApiHarnessConversationsScenariosParams = zod.object({

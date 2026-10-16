@@ -1154,7 +1154,9 @@ def conversation_scenarios(
 
     from simulate.services.harness_scenarios import apply_filters, apply_search
 
-    live = HostedHarnessScenario.no_workspace_objects.filter(job=conversation.job)
+    live = HostedHarnessScenario.no_workspace_objects.filter(
+        job=conversation.job.environment or conversation.job
+    )
     queryset = live
     numbers = _numbers_meant(params.get("numbers"), params.get("ranges"))
     if numbers:
@@ -1218,7 +1220,7 @@ def conversation_overview(conversation: HostedHarnessConversation) -> dict[str, 
     job = conversation.job
     environment = job.environment or job
     rows = list(
-        HostedHarnessScenario.no_workspace_objects.filter(job=job)
+        HostedHarnessScenario.no_workspace_objects.filter(job=environment)
         .order_by("number")
         .values("number", "name", "use_case", "coverage")
     )
@@ -1230,7 +1232,7 @@ def conversation_overview(conversation: HostedHarnessConversation) -> dict[str, 
         str((row["coverage"] or {}).get("overlay") or "") for row in rows if row["coverage"]
     }
     grid = coverage_grid(
-        HostedHarnessScenario.no_workspace_objects.filter(job=job), "task", "overlay"
+        HostedHarnessScenario.no_workspace_objects.filter(job=environment), "task", "overlay"
     )
     agent = (environment.payload or {}).get("agent") or {}
     return {
@@ -1311,7 +1313,7 @@ def publish_conversation_workspace(
         }
     job = conversation.job
     environment = job.environment or job
-    before = _suite_snapshot(job)
+    before = _suite_snapshot(environment)
     try:
         published = promote_latest_checkpoint(conversation, retire_runtime=False)
     except HostedHarnessError as exc:
@@ -1322,21 +1324,7 @@ def publish_conversation_workspace(
             "code": "environment_not_ready",
             "message": "the environment is not completed, so chat changes cannot be published",
         }
-    if job.id != environment.id:
-        # The person may be looking at one of the environment's runs; keep its tab in step.
-        from simulate.services.harness_scenarios import index_scenarios
-
-        suite = next(
-            (
-                one.get("data")
-                for one in published.stage_outputs or []
-                if isinstance(one, dict) and one.get("kind") == "scenarios"
-            ),
-            None,
-        )
-        if isinstance(suite, list) and suite:
-            index_scenarios(job, suite, prune=True)
-    after = _suite_snapshot(job)
+    after = _suite_snapshot(environment)
     added = sorted(key for key in after if key not in before)
     removed = sorted(key for key in before if key not in after)
     changed = sorted(key for key in after if key in before and after[key][2] != before[key][2])
@@ -1428,6 +1416,7 @@ def start_conversation_run(
     numbers: list[int],
     ranges: list[dict[str, int]],
     trials: int,
+    operation_id: str = "",
 ) -> dict[str, Any]:
     """Run the scenarios the chat names by tab number, the way the Scenarios tab does."""
     from simulate.services.harness_usage import require_harness_call_usage
@@ -1440,7 +1429,7 @@ def start_conversation_run(
     rows = {
         row.number: row.scenario_key
         for row in HostedHarnessScenario.no_workspace_objects.filter(
-            job=job, number__in=wanted
+            job=environment, number__in=wanted
         )
     }
     missing = [number for number in wanted if number not in rows]
@@ -1457,9 +1446,11 @@ def start_conversation_run(
         environment,
         scenario_keys=[rows[number] for number in wanted],
         trials=trials,
-        idempotency_key=f"conversation:{conversation.id}:{uuid.uuid4().hex}",
+        idempotency_key=f"conversation:{conversation.id}:{operation_id or uuid.uuid4().hex}",
     )
-    if created:
+    # The workflow id is the run's, so a retry after a lost response or a failed dispatch
+    # reaches the same workflow rather than starting a second one.
+    if created or child.state == HostedHarnessJob.State.QUEUED:
         retry = child.payload["retry"]
         start_hosted_harness_gateway_workflow(
             str(child.id),

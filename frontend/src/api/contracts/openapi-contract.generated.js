@@ -62716,6 +62716,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maximum: 20,
           minimum: 1,
         },
+        operation_id: {
+          title: "Operation id",
+          type: "string",
+          maxLength: 64,
+        },
       },
     },
     HarnessConversationRunStatus: {

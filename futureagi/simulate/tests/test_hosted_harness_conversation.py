@@ -1534,3 +1534,110 @@ def test_new_chat_sandbox_starts_from_the_environment_and_keeps_only_chat_state(
     assert f"scenarios/{NAMES[0]}/scenario.json" in paths
     assert ".futureagi-conversation.json" in paths
     assert authoring_basis(started) == "sha256:current"
+
+
+@pytest.mark.django_db
+def test_publishing_from_a_runs_chat_leaves_that_runs_scenarios_as_they_ran(
+    user, workspace, storage
+):
+    from simulate.models import HostedHarnessScenario
+    from simulate.services.hosted_harness_conversation import (
+        environment_authoring_revision,
+    )
+    from simulate.tests.test_harness_amend_archive import NAMES, _key, _run_environment
+
+    environment = _run_environment(user, workspace, "run-chat-history")
+    _prime_environment_archive(
+        environment, storage, _chat_checkpoint(NAMES[:2], one_liner="original")
+    )
+    run, _ = create_selected_harness_run(
+        environment, scenario_keys=[_key(NAMES[0])], trials=1, idempotency_key="subset"
+    )
+    run.state = HostedHarnessJob.State.COMPLETED
+    run.save(update_fields=["state", "updated_at"])
+
+    def held(job):
+        return sorted(
+            HostedHarnessScenario.no_workspace_objects.filter(job=job).values_list(
+                "scenario_key", "number", "name", "instruction"
+            )
+        )
+
+    ran_with = held(run)
+    conversation, _command, _ = enqueue_message(
+        run, content="Drop the first, add one", client_request_id="run-chat-edit"
+    )
+    capability = issue_conversation_capability(
+        conversation,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-run-chat",
+        attempt=None,
+        ttl_seconds=600,
+    )
+    client, headers = APIClient(), _headers(capability)
+    edited = _commit_checkpoint(
+        client,
+        conversation,
+        headers,
+        _stamped(
+            _chat_checkpoint(NAMES[1:], one_liner="edited"),
+            environment_authoring_revision(run),
+        ),
+    )
+    _send_events(client, conversation, headers, (1, "tool_started", {"tool": "save_changes"}))
+
+    published = client.post(
+        f"{BASE}/{conversation.id}/publish/", {"digest": edited["digest"]}, format="json", **headers
+    ).json()
+
+    assert published["applied"] is True, published
+    assert (len(published["removed"]), len(published["added"])) == (1, 1)
+    assert held(run) == ran_with
+    assert {key for key, *_ in held(environment)} == {_key(name) for name in NAMES[1:]}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("first_dispatch", ["response_lost", "dispatch_failed"])
+def test_a_retried_chat_run_start_keeps_one_run_and_one_workflow(
+    user, workspace, storage, monkeypatch, first_dispatch
+):
+    from simulate.models import HostedHarnessScenario
+    from simulate.temporal import client as temporal_client
+    from simulate.tests.test_harness_amend_archive import NAMES, _key, _run_environment
+
+    environment = _run_environment(user, workspace, f"run-start-{first_dispatch}")
+    _prime_environment_archive(environment, storage, _chat_checkpoint(NAMES[:2], one_liner="x"))
+    HostedHarnessScenario.no_workspace_objects.filter(
+        job=environment, scenario_key=_key(NAMES[0])
+    ).update(number=1)
+    conversation, _command, _ = enqueue_message(
+        environment, content="Run #1", client_request_id="run-start"
+    )
+    capability = issue_conversation_capability(
+        conversation,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-run-start",
+        attempt=None,
+        ttl_seconds=600,
+    )
+    dispatched = []
+
+    def start(job_id, *_args):
+        dispatched.append(job_id)
+        if first_dispatch == "dispatch_failed" and len(dispatched) == 1:
+            raise RuntimeError("scheduler unavailable")
+        return f"hosted-harness-{job_id}"
+
+    monkeypatch.setattr(temporal_client, "start_hosted_harness_gateway_workflow", start)
+    client, headers = APIClient(raise_request_exception=False), _headers(capability)
+    body = {"numbers": [1], "trials": 1, "operation_id": "start-1"}
+
+    first = client.post(f"{BASE}/{conversation.id}/runs/start/", body, format="json", **headers)
+    retried = client.post(f"{BASE}/{conversation.id}/runs/start/", body, format="json", **headers)
+
+    assert retried.status_code == 200, retried.content
+    runs = HostedHarnessJob.no_workspace_objects.filter(environment=environment)
+    assert runs.count() == 1
+    assert set(dispatched) == {str(runs.get().id)}
+    if first_dispatch == "response_lost":
+        assert first.json()["run_id"] == retried.json()["run_id"]

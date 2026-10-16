@@ -270,6 +270,7 @@ class HostedHarnessConversationViewSet(viewsets.ViewSet):
                 numbers=body.get("numbers") or [],
                 ranges=body.get("ranges") or [],
                 trials=body["trials"],
+                operation_id=body.get("operation_id") or "",
             )
         )
 
