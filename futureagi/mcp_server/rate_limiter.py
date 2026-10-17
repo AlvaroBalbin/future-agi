@@ -239,7 +239,8 @@ def check_sliding_window(
 
     Redis uses a Lua script so concurrent workers cannot overwrite one
     another's request history. Non-Redis caches use the same process lock as the
-    organization limiter; production deployments should use shared Redis.
+    organization limiter; a Redis failure uses a logged process-local window.
+    Production deployments should use shared Redis.
     Returns ``(allowed, oldest_timestamp)``.
     """
     resolved_now = time.time() if now is None else now

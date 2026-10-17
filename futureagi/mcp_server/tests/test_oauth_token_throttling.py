@@ -20,6 +20,7 @@ from mcp_server.models.oauth_code import MCPOAuthCode
 from mcp_server.oauth_utils import hash_client_secret
 from mcp_server.throttles import (
     MCPOAuthTokenIPThrottle,
+    _invalid_attempt_key,
     get_invalid_attempt_lockout_wait,
     record_invalid_token_attempt,
 )
@@ -92,6 +93,21 @@ class _SlowCache:
         return self._inner.set(*args, **kwargs)
 
 
+class _SynchronizedCache:
+    def __init__(self, inner, barrier: Barrier, synchronized_key: str) -> None:
+        self._inner = inner
+        self._barrier = barrier
+        self._synchronized_key = synchronized_key
+
+    def add(self, key, *args, **kwargs):
+        if key == self._synchronized_key:
+            self._barrier.wait(timeout=5)
+        return self._inner.add(key, *args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
 @override_settings(
     MCP_OAUTH_TOKEN_IP_THROTTLE_RATE="2/min",
     MCP_OAUTH_TOKEN_CLIENT_THROTTLE_RATE="100/min",
@@ -157,10 +173,11 @@ def test_refresh_token_attempts_are_throttled_by_client_id_across_ips(
     MCP_OAUTH_TOKEN_CLIENT_THROTTLE_RATE="100/min",
     CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}},
 )
-def test_ip_throttle_counts_concurrent_requests_atomically():
+def test_ip_throttle_counts_concurrent_requests_atomically(monkeypatch):
     factory = APIRequestFactory()
     callers = 8
     barrier = Barrier(callers)
+    monkeypatch.setattr(rate_limiter, "_redis_script", lambda lua: None)
 
     def run_race(remote_addr: str, cache_wrapper=None) -> int:
         requests = [
@@ -430,15 +447,12 @@ def test_concurrent_invalid_attempts_set_lockout(oauth_client_app, monkeypatch):
     )
     request = MCPOAuthTokenView().initialize_request(raw_request)
     assert request.data["client_id"] == oauth_client_app.client_id
-    original_add = throttles.cache.add
     cache_barrier = Barrier(2)
-
-    def synchronized_add(key, *args, **kwargs):
-        if key.startswith("mcp_oauth_token_invalid:"):
-            cache_barrier.wait(timeout=5)
-        return original_add(key, *args, **kwargs)
-
-    monkeypatch.setattr(throttles.cache, "add", synchronized_add)
+    monkeypatch.setattr(
+        throttles,
+        "cache",
+        _SynchronizedCache(cache, cache_barrier, _invalid_attempt_key(request)),
+    )
 
     with ThreadPoolExecutor(max_workers=2) as workers:
         results = list(
