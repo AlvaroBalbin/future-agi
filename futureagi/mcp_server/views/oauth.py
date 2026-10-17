@@ -35,11 +35,11 @@ from mcp_server.serializers.contracts import (
 from mcp_server.throttles import (
     MCPOAuthTokenClientThrottle,
     MCPOAuthTokenIPThrottle,
+    MCPOAuthTokenLockoutThrottle,
     MCPOAuthTokenThrottled,
-    get_invalid_attempt_lockout_wait,
+    clear_invalid_token_attempts,
+    log_token_warning,
     record_invalid_token_attempt,
-    request_data_value,
-    stable_hash,
 )
 from tfc.utils.api_contracts import validated_request
 
@@ -261,35 +261,34 @@ class MCPOAuthConsentView(APIView):
 
 
 class MCPOAuthTokenView(APIView):
-    """POST /mcp/oauth/token/ - Exchange code or refresh token for access token."""
+    """POST /mcp/oauth/token/ — Exchange code or refresh token for access token."""
 
     authentication_classes = []
     permission_classes = [AllowAny]
-    throttle_classes = [MCPOAuthTokenIPThrottle, MCPOAuthTokenClientThrottle]
-
-    def _token_log_context(self, request):
-        client_id = request_data_value(request, "client_id")
-        remote_addr = request.META.get("REMOTE_ADDR", "")
-        return {
-            "grant_type": request_data_value(request, "grant_type") or "unknown",
-            "client_id_hash": (
-                stable_hash(client_id, length=16) if client_id else None
-            ),
-            "remote_addr_hash": (
-                stable_hash(remote_addr, length=16) if remote_addr else None
-            ),
-        }
-
-    def _log_token_warning(self, request, event_name, **kwargs):
-        logger.warning(event_name, **self._token_log_context(request), **kwargs)
+    throttle_classes = [
+        MCPOAuthTokenLockoutThrottle,
+        MCPOAuthTokenIPThrottle,
+        MCPOAuthTokenClientThrottle,
+    ]
 
     def throttled(self, request, wait):
-        self._log_token_warning(
+        retry_after = max(int(wait or 1), 1)
+        log_token_warning(
             request,
             "mcp_oauth_token_throttled",
-            retry_after_seconds=wait,
+            retry_after_seconds=retry_after,
         )
-        raise MCPOAuthTokenThrottled(wait)
+        raise MCPOAuthTokenThrottled(retry_after)
+
+    def handle_exception(self, exc):
+        if isinstance(exc, MCPOAuthTokenThrottled):
+            retry_after = max(int(exc.wait or 1), 1)
+            return Response(
+                {str(k): str(v) for k, v in exc.detail.items()},
+                status=exc.status_code,
+                headers={"Retry-After": str(retry_after)},
+            )
+        return super().handle_exception(exc)
 
     def _invalid_token_response(
         self,
@@ -301,7 +300,7 @@ class MCPOAuthTokenView(APIView):
         error_description=None,
     ):
         lockout_seconds = record_invalid_token_attempt(request)
-        self._log_token_warning(
+        log_token_warning(
             request,
             "mcp_oauth_token_invalid_attempt",
             reason=reason,
@@ -311,6 +310,26 @@ class MCPOAuthTokenView(APIView):
         if error_description:
             body["error_description"] = error_description
         return Response(body, status=status)
+
+    def _authenticate_client(self, request, client_id, client_secret):
+        client, error_response = _get_active_oauth_client(client_id, protocol="oauth")
+        if error_response is not None:
+            return None, error_response
+        if client is None:
+            return None, self._invalid_token_response(
+                request,
+                error="invalid_client",
+                status=401,
+                reason="unknown_client",
+            )
+        if not verify_client_secret(client_secret, client.client_secret_hash):
+            return None, self._invalid_token_response(
+                request,
+                error="invalid_client",
+                status=401,
+                reason="invalid_client_secret",
+            )
+        return client, None
 
     @validated_request(
         request_serializer=MCPOAuthTokenRequestSerializer,
@@ -335,22 +354,6 @@ class MCPOAuthTokenView(APIView):
         data = request.validated_data
         grant_type = data.get("grant_type")
 
-        lockout_wait = get_invalid_attempt_lockout_wait(request)
-        if lockout_wait:
-            self._log_token_warning(
-                request,
-                "mcp_oauth_token_invalid_attempt_lockout",
-                retry_after_seconds=lockout_wait,
-            )
-            return Response(
-                {
-                    "error": "slow_down",
-                    "error_description": "Too many invalid token attempts",
-                },
-                status=429,
-                headers={"Retry-After": str(lockout_wait)},
-            )
-
         if grant_type == "authorization_code":
             return self._handle_authorization_code(request, data)
         elif grant_type == "refresh_token":
@@ -370,20 +373,11 @@ class MCPOAuthTokenView(APIView):
         if not all([code, client_id, client_secret]):
             return Response({"error": "invalid_request"}, status=400)
 
-        # Validate client
-        client, error_response = _get_active_oauth_client(client_id, protocol="oauth")
+        client, error_response = self._authenticate_client(
+            request, client_id, client_secret
+        )
         if error_response is not None:
             return error_response
-        if client is None:
-            return Response({"error": "invalid_client"}, status=401)
-
-        if not verify_client_secret(client_secret, client.client_secret_hash):
-            return self._invalid_token_response(
-                request,
-                error="invalid_client",
-                status=401,
-                reason="invalid_client_secret",
-            )
 
         # Validate authorization code
         try:
@@ -419,6 +413,7 @@ class MCPOAuthTokenView(APIView):
         # Mark code as used
         auth_code.used = True
         auth_code.save(update_fields=["used"])
+        clear_invalid_token_attempts(request)
 
         # Generate tokens
         access_token, expires_at = generate_oauth_token(
@@ -487,20 +482,11 @@ class MCPOAuthTokenView(APIView):
         if not all([refresh_token, client_id, client_secret]):
             return Response({"error": "invalid_request"}, status=400)
 
-        # Validate client
-        client, error_response = _get_active_oauth_client(client_id, protocol="oauth")
+        client, error_response = self._authenticate_client(
+            request, client_id, client_secret
+        )
         if error_response is not None:
             return error_response
-        if client is None:
-            return Response({"error": "invalid_client"}, status=401)
-
-        if not verify_client_secret(client_secret, client.client_secret_hash):
-            return self._invalid_token_response(
-                request,
-                error="invalid_client",
-                status=401,
-                reason="invalid_client_secret",
-            )
 
         # Decrypt and validate refresh token
         payload = decrypt_oauth_token(refresh_token)
@@ -537,6 +523,8 @@ class MCPOAuthTokenView(APIView):
                 status=400,
                 reason="refresh_connection_not_found",
             )
+
+        clear_invalid_token_attempts(request)
 
         # Get current scope from tool config
         try:

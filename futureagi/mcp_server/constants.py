@@ -86,10 +86,9 @@ RATE_LIMITS = {
     "enterprise": {"per_minute": 500, "per_day": 100_000, "concurrent_sessions": None},
 }
 
-# Public OAuth token endpoint defaults. Deployments can override these through
-# the corresponding Django settings without changing the protocol code.
-DEFAULT_OAUTH_TOKEN_IP_RATE = "30/min"
-DEFAULT_OAUTH_TOKEN_CLIENT_RATE = "10/min"
+# Public OAuth token endpoint defaults (overridable via MCP_OAUTH_TOKEN_* Django settings).
+DEFAULT_OAUTH_TOKEN_IP_THROTTLE_RATE = "30/min"
+DEFAULT_OAUTH_TOKEN_CLIENT_THROTTLE_RATE = "10/min"
 DEFAULT_OAUTH_TOKEN_INVALID_ATTEMPT_LIMIT = 5
 DEFAULT_OAUTH_TOKEN_INVALID_ATTEMPT_WINDOW_SECONDS = 300
 DEFAULT_OAUTH_TOKEN_INVALID_LOCKOUT_SECONDS = 300
