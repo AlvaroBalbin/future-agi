@@ -177,14 +177,27 @@ def _record_window(
 
 def _check_atomic(minute_key, day_key, limits, now, day_ttl):
     """Decide and record in Redis. Returns (verdict, detail) or None if absent."""
-    script = _redis_script(_SLIDING_WINDOW_LUA)
-    if script is None:
+    try:
+        script = _redis_script(_SLIDING_WINDOW_LUA)
+        if script is None:
+            return None
+        verdict, detail = script(
+            keys=[minute_key, day_key],
+            args=[
+                now,
+                limits["per_minute"],
+                limits["per_day"],
+                day_ttl,
+                uuid.uuid4().hex,
+            ],
+        )
+        return int(verdict), float(detail or 0)
+    except Exception:
+        logger.warning(
+            "mcp_rate_limit_redis_error_falling_back_to_locked_window",
+            exc_info=True,
+        )
         return None
-    verdict, detail = script(
-        keys=[minute_key, day_key],
-        args=[now, limits["per_minute"], limits["per_day"], day_ttl, uuid.uuid4().hex],
-    )
-    return int(verdict), float(detail or 0)
 
 
 def _check_locked(minute_key, day_key, limits, now, day_ttl):

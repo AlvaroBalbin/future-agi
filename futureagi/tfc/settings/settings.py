@@ -558,9 +558,6 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 10,  # Number of objects per page.
     "DEFAULT_VERSIONING_CLASS": "rest_framework.versioning.URLPathVersioning",
     "EXCEPTION_HANDLER": "accounts.authentication.custom_exception_handler",
-    # Token throttles use the socket peer unless the deployment explicitly
-    # sets the trusted proxy depth for X-Forwarded-For.
-    "NUM_PROXIES": int(os.getenv("REST_FRAMEWORK_NUM_PROXIES", "0")),
 }
 
 # SECRET_KEY — sentinel default so the app starts for first-run self-host;
