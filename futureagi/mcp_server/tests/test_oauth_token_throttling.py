@@ -8,6 +8,7 @@ from threading import Barrier
 from unittest.mock import patch
 
 import pytest
+from django.conf import settings
 from django.core.cache import cache
 from django.test import override_settings
 from rest_framework.test import APIRequestFactory
@@ -76,15 +77,15 @@ def _create_auth_code(user, workspace, client):
 
 
 class _SlowCache:
-    """Widen the read-modify-write window so locmem races fail without locking."""
+    """Pause concurrent reads so locmem races fail without locking."""
 
-    def __init__(self, inner, delay: float = 0.005) -> None:
+    def __init__(self, inner, barrier: Barrier) -> None:
         self._inner = inner
-        self._delay = delay
+        self._barrier = barrier
 
     def get(self, *args, **kwargs):
         value = self._inner.get(*args, **kwargs)
-        time.sleep(self._delay)
+        self._barrier.wait(timeout=5)
         return value
 
     def set(self, *args, **kwargs):
@@ -126,12 +127,23 @@ def test_refresh_token_attempts_are_throttled_by_client_id_across_ips(
         "grant_type": "refresh_token",
         "refresh_token": "bad-refresh-token",
         "client_id": oauth_client_app.client_id,
-        "client_secret": "wrong-secret",
     }
 
-    first = _post_token(api_client, payload, remote_addr="203.0.113.21")
-    second = _post_token(api_client, payload, remote_addr="203.0.113.22")
-    third = _post_token(api_client, payload, remote_addr="203.0.113.23")
+    first = _post_token(
+        api_client,
+        {**payload, "client_secret": "wrong-secret-1"},
+        remote_addr="203.0.113.21",
+    )
+    second = _post_token(
+        api_client,
+        {**payload, "client_secret": "wrong-secret-2"},
+        remote_addr="203.0.113.22",
+    )
+    third = _post_token(
+        api_client,
+        {**payload, "client_secret": "wrong-secret-3"},
+        remote_addr="203.0.113.23",
+    )
 
     assert first.status_code == 401
     assert second.status_code == 401
@@ -143,13 +155,14 @@ def test_refresh_token_attempts_are_throttled_by_client_id_across_ips(
 @override_settings(
     MCP_OAUTH_TOKEN_IP_THROTTLE_RATE="2/min",
     MCP_OAUTH_TOKEN_CLIENT_THROTTLE_RATE="100/min",
+    CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}},
 )
 def test_ip_throttle_counts_concurrent_requests_atomically():
     factory = APIRequestFactory()
     callers = 8
     barrier = Barrier(callers)
 
-    def run_race(remote_addr: str) -> int:
+    def run_race(remote_addr: str, cache_wrapper=None) -> int:
         requests = [
             factory.post(
                 TOKEN_URL,
@@ -164,7 +177,10 @@ def test_ip_throttle_counts_concurrent_requests_atomically():
             barrier.wait()
             return MCPOAuthTokenIPThrottle().allow_request(request, None)
 
-        with patch.object(rate_limiter, "cache", _SlowCache(cache)):
+        if cache_wrapper is None:
+            with ThreadPoolExecutor(max_workers=callers) as workers:
+                return sum(workers.map(allow, requests))
+        with patch.object(rate_limiter, "cache", cache_wrapper):
             with ThreadPoolExecutor(max_workers=callers) as workers:
                 return sum(workers.map(allow, requests))
 
@@ -178,7 +194,7 @@ def test_ip_throttle_counts_concurrent_requests_atomically():
             return False
 
     with patch.object(rate_limiter, "_fallback_lock", _NoLock()):
-        assert run_race("203.0.113.26") > 2
+        assert run_race("203.0.113.26", _SlowCache(cache, Barrier(callers))) > 2
 
 
 @pytest.mark.skipif(not os.environ.get("REDIS_URL"), reason="needs Redis")
@@ -306,9 +322,7 @@ def test_lockout_expiry_resets_attempt_counter(
     MCP_OAUTH_TOKEN_INVALID_ATTEMPT_WINDOW_SECONDS=300,
     MCP_OAUTH_TOKEN_INVALID_LOCKOUT_SECONDS=60,
 )
-def test_forwarded_for_isolates_clients_behind_shared_proxy(
-    api_client, oauth_client_app
-):
+def test_forwarded_for_cannot_override_remote_address(api_client, oauth_client_app):
     payload = {
         "grant_type": "refresh_token",
         "refresh_token": "bad-refresh-token",
@@ -344,14 +358,58 @@ def test_forwarded_for_isolates_clients_behind_shared_proxy(
         == 429
     )
 
-    # A different client IP behind the same reverse proxy is not locked out.
+    # A different forwarded address cannot bypass the remote-address lockout.
     other_client = _post_token(
         api_client,
         payload,
         remote_addr="10.0.0.1",
         HTTP_X_FORWARDED_FOR="198.51.100.11",
     )
-    assert other_client.status_code == 400
+    assert other_client.status_code == 429
+
+    # A different socket peer gets its own lockout bucket.
+    different_client = _post_token(
+        api_client,
+        payload,
+        remote_addr="10.0.0.2",
+        HTTP_X_FORWARDED_FOR="198.51.100.11",
+    )
+    assert different_client.status_code == 400
+
+
+@override_settings(REST_FRAMEWORK={**settings.REST_FRAMEWORK, "NUM_PROXIES": 1})
+def test_configured_proxy_count_uses_forwarded_address():
+    raw_request = APIRequestFactory().post(
+        TOKEN_URL,
+        {"grant_type": "refresh_token", "client_id": "same-client"},
+        format="json",
+        REMOTE_ADDR="10.0.0.1",
+        HTTP_X_FORWARDED_FOR="198.51.100.10",
+    )
+    request = MCPOAuthTokenView().initialize_request(raw_request)
+
+    assert throttles.client_ident(request) == "198.51.100.10"
+
+
+def test_redis_script_failure_falls_back_to_locked_window(monkeypatch):
+    def failing_script(**kwargs):
+        raise RuntimeError("redis unavailable")
+
+    key = f"redis-failure:{uuid.uuid4().hex}"
+    monkeypatch.setattr(rate_limiter, "_redis_script", lambda lua: failing_script)
+
+    with patch.object(rate_limiter.logger, "warning") as warning:
+        assert rate_limiter.check_sliding_window(key, 1, 60) == (
+            True,
+            0.0,
+        )
+        allowed, oldest = rate_limiter.check_sliding_window(key, 1, 60)
+
+    assert allowed is False
+    assert oldest > 0
+    warning.assert_called_with(
+        "mcp_rate_limit_redis_error_falling_back_to_locked_window", exc_info=True
+    )
 
 
 @override_settings(
@@ -371,6 +429,7 @@ def test_concurrent_invalid_attempts_set_lockout(oauth_client_app, monkeypatch):
         TOKEN_URL, payload, format="json", REMOTE_ADDR="203.0.113.41"
     )
     request = MCPOAuthTokenView().initialize_request(raw_request)
+    assert request.data["client_id"] == oauth_client_app.client_id
     original_add = throttles.cache.add
     cache_barrier = Barrier(2)
 

@@ -14,6 +14,7 @@ import uuid
 
 import structlog
 from django.core.cache import cache
+from django.core.cache.backends.locmem import LocMemCache
 
 from mcp_server.constants import RATE_LIMITS
 from mcp_server.exceptions import RateLimitExceededError
@@ -73,11 +74,17 @@ return {1, '0'}
 
 _MINUTE_EXCEEDED, _DAY_EXCEEDED, _ALLOWED = 0, 1, 2
 
-# Serializes the non-Redis fallback within one process. Only ever contended on
-# locmem deployments; the Redis path never takes it.
+# Serializes the non-Redis and process-local fallback within one process.
 _fallback_lock = threading.Lock()
+_process_fallback_cache = LocMemCache("mcp_rate_limit_process_fallback", {})
 _scripts: dict[str, object] = {}
 _script_unavailable = False
+
+
+def _disable_redis_scripts() -> None:
+    global _script_unavailable
+    _script_unavailable = True
+    logger.info("mcp_rate_limit_no_redis_falling_back_to_locked_window")
 
 
 def _redis_script(lua: str):
@@ -87,23 +94,23 @@ def _redis_script(lua: str):
         return None
     script = _scripts.get(lua)
     if script is None:
-        from django.core.cache.backends.base import InvalidCacheBackendError
-        from django_redis import get_redis_connection
-        from redis.exceptions import RedisError
+        try:
+            from django.core.cache.backends.base import InvalidCacheBackendError
+            from django_redis import get_redis_connection
+        except ImportError:
+            # A locmem cache has no Redis client at all. Remember that so the
+            # fallback does not pay for a failed lookup on every call.
+            _disable_redis_scripts()
+            return None
 
         try:
             script = get_redis_connection("default").register_script(lua)
         except (
-            ImportError,
             InvalidCacheBackendError,
             NotImplementedError,
             AttributeError,
-            RedisError,
         ):
-            # A locmem cache has no Redis client at all. Remember that so the
-            # fallback does not pay for a failed lookup on every call.
-            _script_unavailable = True
-            logger.info("mcp_rate_limit_no_redis_falling_back_to_locked_window")
+            _disable_redis_scripts()
             return None
         _scripts[lua] = script
     return script
@@ -146,15 +153,26 @@ def _seconds_until_utc_midnight(now_dt: datetime.datetime) -> int:
     return max(int((midnight - now_dt).total_seconds()), 1)
 
 
-def _prune_window(window_key: str, duration: int, now: float) -> list[float]:
-    return [ts for ts in (cache.get(window_key) or []) if ts > now - duration]
+def _prune_window(
+    window_key: str,
+    duration: int,
+    now: float,
+    cache_backend=None,
+) -> list[float]:
+    backend = cache if cache_backend is None else cache_backend
+    return [ts for ts in (backend.get(window_key) or []) if ts > now - duration]
 
 
 def _record_window(
-    window_key: str, timestamps: list[float], duration: int, now: float
+    window_key: str,
+    timestamps: list[float],
+    duration: int,
+    now: float,
+    cache_backend=None,
 ) -> None:
+    backend = cache if cache_backend is None else cache_backend
     timestamps.append(now)
-    cache.set(window_key, timestamps, timeout=max(duration * 2, 1))
+    backend.set(window_key, timestamps, timeout=max(duration * 2, 1))
 
 
 def _check_atomic(minute_key, day_key, limits, now, day_ttl):
@@ -195,15 +213,19 @@ def _check_locked(minute_key, day_key, limits, now, day_ttl):
 
 
 def _check_single_locked(
-    window_key: str, limit: int, duration: int, now: float
+    window_key: str,
+    limit: int,
+    duration: int,
+    now: float,
+    cache_backend=None,
 ) -> tuple[bool, float]:
     """Check one sliding window with the serialized non-Redis fallback."""
     with _fallback_lock:
-        timestamps = _prune_window(window_key, duration, now)
+        timestamps = _prune_window(window_key, duration, now, cache_backend)
         if len(timestamps) >= limit:
             return False, min(timestamps)
 
-        _record_window(window_key, timestamps, duration, now)
+        _record_window(window_key, timestamps, duration, now, cache_backend)
         return True, 0.0
 
 
@@ -221,13 +243,26 @@ def check_sliding_window(
     Returns ``(allowed, oldest_timestamp)``.
     """
     resolved_now = time.time() if now is None else now
-    script = _redis_script(_SINGLE_WINDOW_LUA)
-    if script is not None:
-        allowed, oldest = script(
-            keys=[window_key],
-            args=[resolved_now, limit, duration, uuid.uuid4().hex],
+    try:
+        script = _redis_script(_SINGLE_WINDOW_LUA)
+        if script is not None:
+            allowed, oldest = script(
+                keys=[window_key],
+                args=[resolved_now, limit, duration, uuid.uuid4().hex],
+            )
+            return bool(int(allowed)), float(oldest or 0)
+    except Exception:
+        logger.warning(
+            "mcp_rate_limit_redis_error_falling_back_to_locked_window",
+            exc_info=True,
         )
-        return bool(int(allowed)), float(oldest or 0)
+        return _check_single_locked(
+            window_key,
+            limit,
+            duration,
+            resolved_now,
+            _process_fallback_cache,
+        )
     return _check_single_locked(window_key, limit, duration, resolved_now)
 
 
@@ -235,7 +270,7 @@ def check_rate_limit(organization_id: str, tier: str) -> None:
     """Check sliding window rate limits. Raises RateLimitExceededError if exceeded."""
     limits = RATE_LIMITS.get(tier, RATE_LIMITS["free"])
     now = time.time()
-    now_dt = datetime.datetime.now(datetime.timezone.utc)
+    now_dt = datetime.datetime.now(datetime.UTC)
     day_ttl = _seconds_until_utc_midnight(now_dt)
     minute_key = f"mcp_rl:min:{organization_id}"
     day_key = f"mcp_rl:day:{organization_id}"

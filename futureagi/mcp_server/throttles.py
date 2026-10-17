@@ -11,6 +11,7 @@ from django.conf import settings
 from django.core.cache import cache
 from rest_framework.exceptions import APIException, Throttled
 from rest_framework.request import Request
+from rest_framework.settings import api_settings
 from rest_framework.throttling import BaseThrottle, SimpleRateThrottle
 
 from mcp_server.constants import (
@@ -48,7 +49,12 @@ def request_data_value(request: Request, key: str) -> str:
 
 def client_ident(request: Request) -> str:
     """Return a consistent client IP identifier across throttles, lockouts, and logs."""
-    return _base_throttle.get_ident(request) or "unknown"
+    # DRF trusts the full X-Forwarded-For header when NUM_PROXIES is unset.
+    # Use forwarded addresses only when deployment config explicitly declares
+    # the trusted proxy depth; otherwise callers could choose their identity.
+    if api_settings.NUM_PROXIES is not None:
+        return _base_throttle.get_ident(request) or "unknown"
+    return request.META.get("REMOTE_ADDR", "") or "unknown"
 
 
 def oauth_token_context(request: Request) -> dict[str, str | None]:
