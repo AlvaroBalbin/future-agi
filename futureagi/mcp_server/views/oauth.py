@@ -12,6 +12,7 @@ from rest_framework.views import APIView
 
 from accounts.permissions import RequiresIndependentAuth
 from mcp_server.constants import TOOL_GROUPS
+from mcp_server.exceptions import RateLimitBackendUnavailableError
 from mcp_server.models.connection import MCPConnection
 from mcp_server.models.oauth_client import MCPOAuthClient
 from mcp_server.models.oauth_code import MCPOAuthCode
@@ -281,6 +282,21 @@ class MCPOAuthTokenView(APIView):
         raise MCPOAuthTokenThrottled(retry_after)
 
     def handle_exception(self, exc):
+        if isinstance(exc, RateLimitBackendUnavailableError):
+            retry_after = max(int(exc.retry_after or 1), 1)
+            log_token_warning(
+                self.request,
+                "mcp_oauth_token_rate_limiter_unavailable",
+                retry_after_seconds=retry_after,
+            )
+            return Response(
+                {
+                    "error": "slow_down",
+                    "error_description": "Token throttling temporarily unavailable",
+                },
+                status=429,
+                headers={"Retry-After": str(retry_after)},
+            )
         if isinstance(exc, MCPOAuthTokenThrottled):
             retry_after = max(int(exc.wait or 1), 1)
             return Response(

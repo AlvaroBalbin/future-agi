@@ -11,6 +11,7 @@ import pytest
 from django.conf import settings
 from django.core.cache import cache
 from django.test import override_settings
+from redis.exceptions import RedisError
 from rest_framework.test import APIRequestFactory
 
 import mcp_server.throttles as throttles
@@ -410,7 +411,7 @@ def test_configured_proxy_count_uses_forwarded_address():
 
 def test_redis_script_failure_falls_back_to_locked_window(monkeypatch):
     def failing_script(**kwargs):
-        raise RuntimeError("redis unavailable")
+        raise RedisError("redis unavailable")
 
     key = f"redis-failure:{uuid.uuid4().hex}"
     monkeypatch.setattr(rate_limiter, "_redis_script", lambda lua: failing_script)
@@ -425,8 +426,50 @@ def test_redis_script_failure_falls_back_to_locked_window(monkeypatch):
     assert allowed is False
     assert oldest > 0
     warning.assert_called_with(
-        "mcp_rate_limit_redis_error_falling_back_to_locked_window", exc_info=True
+        "mcp_rate_limit_redis_error_falling_back_to_locked_window",
+        reason="redis_script_execution_failed",
+        exc_info=True,
     )
+
+
+@override_settings(MCP_RATE_LIMIT_ALLOW_LOCAL_FALLBACK=False)
+def test_redis_script_failure_fails_closed_in_production(monkeypatch):
+    def failing_script(**kwargs):
+        raise RedisError("redis unavailable")
+
+    monkeypatch.setattr(rate_limiter, "_redis_script", lambda lua: failing_script)
+
+    with pytest.raises(rate_limiter.RateLimitBackendUnavailableError):
+        rate_limiter.check_sliding_window("redis-required", 1, 60)
+
+
+@override_settings(
+    MCP_RATE_LIMIT_ALLOW_LOCAL_FALLBACK=False,
+    MCP_OAUTH_TOKEN_IP_THROTTLE_RATE="2/min",
+    MCP_OAUTH_TOKEN_CLIENT_THROTTLE_RATE="100/min",
+)
+def test_oauth_endpoint_fails_closed_when_redis_is_unavailable(api_client, monkeypatch):
+    def failing_script(**kwargs):
+        raise RedisError("redis unavailable")
+
+    monkeypatch.setattr(rate_limiter, "_redis_script", lambda lua: failing_script)
+
+    response = _post_token(
+        api_client,
+        {
+            "grant_type": "refresh_token",
+            "refresh_token": "untrusted-token",
+            "client_id": "test-client",
+            "client_secret": "untrusted-secret",
+        },
+    )
+
+    assert response.status_code == 429
+    assert response.data["error"] == "slow_down"
+    assert response.data["error_description"] == (
+        "Token throttling temporarily unavailable"
+    )
+    assert int(response["Retry-After"]) == 60
 
 
 @override_settings(

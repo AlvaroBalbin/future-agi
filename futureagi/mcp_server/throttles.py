@@ -9,6 +9,8 @@ from typing import TypeVar
 import structlog
 from django.conf import settings
 from django.core.cache import cache
+from django_redis.exceptions import ConnectionInterrupted
+from redis.exceptions import RedisError
 from rest_framework.exceptions import APIException, Throttled
 from rest_framework.request import Request
 from rest_framework.settings import api_settings
@@ -21,6 +23,7 @@ from mcp_server.constants import (
     DEFAULT_OAUTH_TOKEN_INVALID_LOCKOUT_SECONDS,
     DEFAULT_OAUTH_TOKEN_IP_THROTTLE_RATE,
 )
+from mcp_server.exceptions import RateLimitBackendUnavailableError
 from mcp_server.rate_limiter import check_sliding_window
 
 logger = structlog.get_logger(__name__)
@@ -89,7 +92,11 @@ def _invalid_lockout_key(request: Request) -> str:
 
 
 def get_invalid_attempt_lockout_wait(request: Request) -> int:
-    locked_until = cache.get(_invalid_lockout_key(request))
+    try:
+        locked_until = cache.get(_invalid_lockout_key(request))
+    except (ConnectionInterrupted, RedisError) as exc:
+        logger.error("mcp_oauth_token_throttle_cache_unavailable", exc_info=True)
+        raise RateLimitBackendUnavailableError() from exc
     if not locked_until:
         return 0
 
@@ -97,7 +104,11 @@ def get_invalid_attempt_lockout_wait(request: Request) -> int:
 
 
 def clear_invalid_token_attempts(request: Request) -> None:
-    cache.delete(_invalid_attempt_key(request))
+    try:
+        cache.delete(_invalid_attempt_key(request))
+    except (ConnectionInterrupted, RedisError) as exc:
+        logger.error("mcp_oauth_token_throttle_cache_unavailable", exc_info=True)
+        raise RateLimitBackendUnavailableError() from exc
 
 
 def record_invalid_token_attempt(request: Request) -> int:
@@ -121,26 +132,34 @@ def record_invalid_token_attempt(request: Request) -> int:
     )
 
     attempt_key = _invalid_attempt_key(request)
-    if cache.add(attempt_key, 1, timeout=window_seconds):
-        attempts = 1
-    else:
-        try:
-            attempts = cache.incr(attempt_key)
-        except ValueError:
-            # Recover if the window expired between add() and incr().
-            cache.set(attempt_key, 1, timeout=window_seconds)
+    try:
+        if cache.add(attempt_key, 1, timeout=window_seconds):
             attempts = 1
+        else:
+            try:
+                attempts = cache.incr(attempt_key)
+            except ValueError:
+                # Recover if the window expired between add() and incr().
+                cache.set(attempt_key, 1, timeout=window_seconds)
+                attempts = 1
+    except (ConnectionInterrupted, RedisError) as exc:
+        logger.error("mcp_oauth_token_throttle_cache_unavailable", exc_info=True)
+        raise RateLimitBackendUnavailableError() from exc
 
     if attempts < limit:
         return 0
 
     locked_until = time.time() + lockout_seconds
-    cache.set(
-        _invalid_lockout_key(request),
-        locked_until,
-        timeout=lockout_seconds,
-    )
-    cache.delete(attempt_key)
+    try:
+        cache.set(
+            _invalid_lockout_key(request),
+            locked_until,
+            timeout=lockout_seconds,
+        )
+        cache.delete(attempt_key)
+    except (ConnectionInterrupted, RedisError) as exc:
+        logger.error("mcp_oauth_token_throttle_cache_unavailable", exc_info=True)
+        raise RateLimitBackendUnavailableError() from exc
     return lockout_seconds
 
 

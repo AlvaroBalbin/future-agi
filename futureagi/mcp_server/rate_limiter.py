@@ -3,8 +3,8 @@
 Counting has to be atomic: a stateless transport serves several calls from one
 organization concurrently, and a read-modify-write over the cache lets them
 overwrite each other's counts and sail past the limit. Redis does the whole
-decision in one script; when the cache is not Redis (locmem deployments and
-tests) a process lock keeps at least a single worker's calls serialized.
+decision in one script. A process-locked fallback exists only when explicitly
+enabled by test settings; production fails closed if Redis cannot decide.
 """
 
 import datetime
@@ -13,11 +13,16 @@ import time
 import uuid
 
 import structlog
+from django.conf import settings
 from django.core.cache import cache
-from django.core.cache.backends.locmem import LocMemCache
+from django_redis.exceptions import ConnectionInterrupted
+from redis.exceptions import RedisError
 
 from mcp_server.constants import RATE_LIMITS
-from mcp_server.exceptions import RateLimitExceededError
+from mcp_server.exceptions import (
+    RateLimitBackendUnavailableError,
+    RateLimitExceededError,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -74,33 +79,44 @@ return {1, '0'}
 
 _MINUTE_EXCEEDED, _DAY_EXCEEDED, _ALLOWED = 0, 1, 2
 
-# Serializes the non-Redis and process-local fallback within one process.
+# Used only by the explicitly enabled test fallback. Production uses Redis Lua.
 _fallback_lock = threading.Lock()
-_process_fallback_cache = LocMemCache("mcp_rate_limit_process_fallback", {})
 _scripts: dict[str, object] = {}
-_script_unavailable = False
 
 
-def _disable_redis_scripts() -> None:
-    global _script_unavailable
-    _script_unavailable = True
-    logger.info("mcp_rate_limit_no_redis_falling_back_to_locked_window")
+def _local_fallback_enabled() -> bool:
+    return bool(getattr(settings, "MCP_RATE_LIMIT_ALLOW_LOCAL_FALLBACK", False))
+
+
+def _fallback_or_raise(reason: str, cause: BaseException | None = None) -> None:
+    if _local_fallback_enabled():
+        logger.warning(
+            "mcp_rate_limit_redis_error_falling_back_to_locked_window",
+            reason=reason,
+            exc_info=bool(cause),
+        )
+        return
+
+    logger.error(
+        "mcp_rate_limit_backend_unavailable",
+        reason=reason,
+        exc_info=bool(cause),
+    )
+    error = RateLimitBackendUnavailableError()
+    if cause is not None:
+        raise error from cause
+    raise error
 
 
 def _redis_script(lua: str):
     """Return the registered Lua script, or None when the cache is not Redis."""
-    global _script_unavailable
-    if _script_unavailable:
-        return None
     script = _scripts.get(lua)
     if script is None:
         try:
             from django.core.cache.backends.base import InvalidCacheBackendError
             from django_redis import get_redis_connection
-        except ImportError:
-            # A locmem cache has no Redis client at all. Remember that so the
-            # fallback does not pay for a failed lookup on every call.
-            _disable_redis_scripts()
+        except ImportError as exc:
+            _fallback_or_raise("redis_client_import_failed", exc)
             return None
 
         try:
@@ -109,8 +125,10 @@ def _redis_script(lua: str):
             InvalidCacheBackendError,
             NotImplementedError,
             AttributeError,
-        ):
-            _disable_redis_scripts()
+            ConnectionInterrupted,
+            RedisError,
+        ) as exc:
+            _fallback_or_raise("redis_script_registration_failed", exc)
             return None
         _scripts[lua] = script
     return script
@@ -192,11 +210,8 @@ def _check_atomic(minute_key, day_key, limits, now, day_ttl):
             ],
         )
         return int(verdict), float(detail or 0)
-    except Exception:
-        logger.warning(
-            "mcp_rate_limit_redis_error_falling_back_to_locked_window",
-            exc_info=True,
-        )
+    except (ConnectionInterrupted, RedisError) as exc:
+        _fallback_or_raise("redis_script_execution_failed", exc)
         return None
 
 
@@ -251,9 +266,9 @@ def check_sliding_window(
     """Atomically admit one request in a bounded sliding window.
 
     Redis uses a Lua script so concurrent workers cannot overwrite one
-    another's request history. Non-Redis caches use the same process lock as the
-    organization limiter; a Redis failure uses a logged process-local window.
-    Production deployments should use shared Redis.
+    another's request history. Non-Redis caches use the same process lock only
+    under the explicit test setting; production deployments require shared
+    Redis.
     Returns ``(allowed, oldest_timestamp)``.
     """
     resolved_now = time.time() if now is None else now
@@ -265,18 +280,8 @@ def check_sliding_window(
                 args=[resolved_now, limit, duration, uuid.uuid4().hex],
             )
             return bool(int(allowed)), float(oldest or 0)
-    except Exception:
-        logger.warning(
-            "mcp_rate_limit_redis_error_falling_back_to_locked_window",
-            exc_info=True,
-        )
-        return _check_single_locked(
-            window_key,
-            limit,
-            duration,
-            resolved_now,
-            _process_fallback_cache,
-        )
+    except (ConnectionInterrupted, RedisError) as exc:
+        _fallback_or_raise("redis_script_execution_failed", exc)
     return _check_single_locked(window_key, limit, duration, resolved_now)
 
 
