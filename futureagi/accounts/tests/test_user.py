@@ -5,6 +5,7 @@ Tests for user authentication, token management, and user info endpoints.
 """
 
 import pytest
+from django.conf import settings
 from django.core.cache import cache
 from rest_framework import status
 
@@ -529,6 +530,23 @@ class TestManageRedisKeyAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_manage_redis_key_accepts_secret_and_sets_value(
+        self, auth_client, clear_cache
+    ):
+        """A valid secret reaches the cache write through the real API path."""
+        response = auth_client.post(
+            "/accounts/redis-key/",
+            {
+                "access_token_id": settings.SECRET_KEY,
+                "key": "test_key",
+                "value": "test_value",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert cache.get("test_key") == "test_value"
 
     def test_manage_redis_key_rejects_unknown_request_fields(self, auth_client):
         response = auth_client.post(
