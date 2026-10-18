@@ -83,6 +83,11 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	if cfg != nil && keyStore == nil {
 		keyStore = auth.NewKeyStore(cfg.Auth)
 	}
+	// Load settles this, but a Config built in code need not have been through
+	// it, and a server without a ceiling is one no request is bounded by.
+	if cfg != nil && cfg.Server.MaxRequestTimeout <= 0 {
+		cfg.Server.MaxRequestTimeout = cfg.Server.WriteTimeout
+	}
 	authKeyStore := keyStore
 	if !authEnabled {
 		authKeyStore = nil
@@ -205,7 +210,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 	}
 
-	handlers := NewHandlers(registry, engine, cfg.Server.MaxRequestBodySize, cfg.Server.DefaultRequestTimeout, failover, modelFallbacks, condRouter, healthMonitor, cfg.Routing.ModelTimeouts, mirror, guardrailEngine, policyStore, cfg.Guardrails.Streaming, modelDBPtr, tenantStore, orgProviderCache, authKeyStore)
+	handlers := NewHandlers(registry, engine, cfg.Server.MaxRequestBodySize, cfg.Server.DefaultRequestTimeout, cfg.Server.MaxRequestTimeout, failover, modelFallbacks, condRouter, healthMonitor, cfg.Routing.ModelTimeouts, mirror, guardrailEngine, policyStore, cfg.Guardrails.Streaming, modelDBPtr, tenantStore, orgProviderCache, authKeyStore)
 	// A streamed completion exists nowhere else — it has to be assembled while
 	// the chunks go past, and only if something is going to record it.
 	handlers.SetCaptureStreamContent(cfg.Logging.RequestLogging.IncludeBodies || (cfg.OTel.Enabled && cfg.OTel.IncludeBodies))
@@ -875,7 +880,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 	// Apply middleware: outermost wraps first.
 	var handler http.Handler = router
-	handler = middleware.Timeout(cfg.Server.DefaultRequestTimeout, "/v1/chat/completions")(handler)
+	handler = middleware.Timeout(cfg.Server.MaxRequestTimeout)(handler)
 	handler = middleware.KeyAuth(authKeyStore, authEnabled)(handler)
 	handler = middleware.LicenseAuth(cfg.LicenseAuth, redisstate.NewLicenseStore(redisClient))(handler)
 	handler = middleware.RequestID(handler)
