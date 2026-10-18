@@ -106,9 +106,7 @@ type A2ASkillConfig struct {
 
 // AssistantsConfig controls the Assistants API proxy.
 type AssistantsConfig struct {
-	Enabled           bool          `yaml:"enabled" json:"enabled"`
-	RunTimeout        time.Duration `yaml:"run_timeout" json:"run_timeout"`
-	StreamReadTimeout time.Duration `yaml:"stream_read_timeout" json:"stream_read_timeout"`
+	Enabled bool `yaml:"enabled" json:"enabled"`
 }
 
 // MCPConfig controls the MCP (Model Context Protocol) gateway.
@@ -1025,9 +1023,7 @@ func DefaultConfig() *Config {
 			},
 		},
 		Assistants: AssistantsConfig{
-			Enabled:           true,
-			RunTimeout:        300 * time.Second,
-			StreamReadTimeout: 60 * time.Second,
+			Enabled: true,
 		},
 		MCP: MCPConfig{
 			Enabled:         false,

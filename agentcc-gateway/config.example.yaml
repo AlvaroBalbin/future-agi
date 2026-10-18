@@ -729,8 +729,6 @@ logging:
 # OpenAI-compatible Assistants API proxy.
 # assistants:
 #   enabled: true
-#   run_timeout: 5m
-#   stream_read_timeout: 60s
 
 # Model Context Protocol — expose tools from registered MCP servers to models.
 # mcp:
