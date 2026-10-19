@@ -38,6 +38,10 @@ def _yaml_score(name: str, hypothesis: str, reference: str) -> float:
     return _load_eval(name)(None, hypothesis, reference, None)["score"]
 
 
+def _yaml_kwargs_score(name: str, **kwargs) -> float:
+    return _load_eval(name)(None, None, None, None, **kwargs)["score"]
+
+
 def _opcode_counts(
     reference: list[str], hypothesis: list[str]
 ) -> tuple[int, int, int, int]:
@@ -109,6 +113,17 @@ def test_system_eval_seeder_loads_both_word_information_templates():
         assert definition["_track"] == "function"
         assert definition["config"]["eval_type_id"] == "CustomCodeEval"
         assert definition["config"]["required_keys"] == ["reference", "hypothesis"]
+
+
+@pytest.mark.parametrize("name", ["word_info_lost", "word_info_preserved"])
+def test_none_inputs_are_treated_as_empty(name):
+    assert _yaml_kwargs_score(name, reference=None, hypothesis=None) == 1.0
+    assert _yaml_kwargs_score(name, reference=None, hypothesis="word") == 0.0
+    assert _yaml_kwargs_score(name, reference="word", hypothesis=None) == 0.0
+    assert calculate_word_info_lost(None, None)["result"] == 1.0
+    assert calculate_word_info_preserved(None, None)["result"] == 1.0
+    assert calculate_word_info_lost(None, "word")["result"] == 0.0
+    assert calculate_word_info_preserved("word", None)["result"] == 0.0
 
 
 def test_yaml_bodies_run_through_the_local_code_eval_sandbox(monkeypatch):

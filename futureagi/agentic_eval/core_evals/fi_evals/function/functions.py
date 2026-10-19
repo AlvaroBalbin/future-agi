@@ -3859,8 +3859,8 @@ def calculate_match_error_rate(reference, hypothesis, **kwargs):
 
 def calculate_word_info_lost(reference, hypothesis, **kwargs):
     """Compute Word Information Lost (WIL). WIL = 1 - (hits/ref_len * hits/hyp_len)."""
-    ref_words = str(reference).strip().lower().split()
-    hyp_words = str(hypothesis).strip().lower().split()
+    ref_words = str(reference if reference is not None else "").strip().lower().split()
+    hyp_words = str(hypothesis if hypothesis is not None else "").strip().lower().split()
     if not ref_words and not hyp_words:
         return {"result": 1.0, "reason": "WIL: 0.0 (both empty)"}
     if not ref_words or not hyp_words:
@@ -3873,8 +3873,8 @@ def calculate_word_info_lost(reference, hypothesis, **kwargs):
 
 def calculate_word_info_preserved(reference, hypothesis, **kwargs):
     """Compute Word Information Preserved (WIP). WIP = hits/ref_len * hits/hyp_len."""
-    ref_words = str(reference).strip().lower().split()
-    hyp_words = str(hypothesis).strip().lower().split()
+    ref_words = str(reference if reference is not None else "").strip().lower().split()
+    hyp_words = str(hypothesis if hypothesis is not None else "").strip().lower().split()
     if not ref_words and not hyp_words:
         return {"result": 1.0, "reason": "WIP: 1.0 (both empty)"}
     if not ref_words or not hyp_words:

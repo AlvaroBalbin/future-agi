@@ -40,8 +40,10 @@ config:
                     insertions += hyp_count
             return hits, substitutions, deletions, insertions
 
-        ref = str(kwargs.get("reference", expected or "")).strip().lower().split()
-        hyp = str(kwargs.get("hypothesis", output or "")).strip().lower().split()
+        reference_value = kwargs.get("reference", expected)
+        hypothesis_value = kwargs.get("hypothesis", output)
+        ref = str(reference_value if reference_value is not None else "").strip().lower().split()
+        hyp = str(hypothesis_value if hypothesis_value is not None else "").strip().lower().split()
         if not ref and not hyp: return {"score": 1.0, "reason": "WIP: 1.0 (both empty)"}
         if not ref or not hyp: return {"score": 0.0, "reason": "WIP: 0.0 (one empty)"}
         n = len(ref)
