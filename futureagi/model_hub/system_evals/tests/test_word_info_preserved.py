@@ -141,6 +141,8 @@ def test_yaml_bodies_run_through_the_local_code_eval_sandbox(monkeypatch):
             hypothesis="the cat sat on the mat",
         )
         assert result["result"] == pytest.approx(0.5)
+        empty_result = custom_code_eval(code, reference=None, hypothesis=None)
+        assert empty_result["result"] == pytest.approx(1.0)
 
 
 def test_alignment_matches_levenshtein_opcode_contract():
