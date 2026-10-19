@@ -1055,6 +1055,15 @@ ALK_HOSTED_SANDBOX_TTL_SECONDS = int(
 # workspace checkpoint survive deletion; this is the idle window after the user's latest
 # message before a post-run chat sandbox is reclaimed, and only trades cost against latency.
 ALK_HOSTED_CHAT_TTL_SECONDS = int(os.getenv("ALK_HOSTED_CHAT_TTL_SECONDS", "1800"))
+# Off sends a fresh build through the staged authoring pipeline instead of the builder session.
+ALK_HOSTED_BUILDER_SESSION = os.getenv("ALK_HOSTED_BUILDER_SESSION", "true").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+# Development only: an ALK source tree a chat sandbox runs instead of the one in its image.
+ALK_HOSTED_SOURCE_OVERLAY = os.getenv("ALK_HOSTED_SOURCE_OVERLAY", "")
 DAYTONA_API_KEY = os.getenv("DAYTONA_API_KEY", "")
 DAYTONA_API_URL = os.getenv("DAYTONA_API_URL") or None
 DAYTONA_TARGET = os.getenv("DAYTONA_TARGET") or None
@@ -1266,6 +1275,13 @@ default_next_url = f"{APP_BASE_URL}/dashboard/develop"
 get_started_url = f"{APP_BASE_URL}/dashboard/get-started"
 default_error_next_url = f"{APP_BASE_URL}/auth/jwt/login?denied=true"
 get_entity_id = f"{_ssl}{APP_URL}"
+SLACK_CLIENT_ID = os.getenv("SLACK_CLIENT_ID", "")
+SLACK_CLIENT_SECRET = os.getenv("SLACK_CLIENT_SECRET", "")
+SLACK_OAUTH_AUTHORIZE_URL = os.getenv("SLACK_OAUTH_AUTHORIZE_URL", "")
+SLACK_API_URL = os.getenv("SLACK_API_URL", "")
+SLACK_REDIRECT_URI = os.getenv(
+    "SLACK_REDIRECT_URI", f"{BASE_URL.rstrip('/')}/integrations/slack/callback/"
+)
 
 get_name_id_format = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
 
