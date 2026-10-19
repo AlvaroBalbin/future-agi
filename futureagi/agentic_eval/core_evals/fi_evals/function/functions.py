@@ -2815,49 +2815,28 @@ def _levenshtein_distance_list(ref, hyp):
 def _align_counts(ref: list[str], hyp: list[str]) -> tuple[int, int, int, int]:
     """Return hits, substitutions, deletions, and insertions for an alignment.
 
-    The backtrace deliberately uses the same tie-breaking order as the
-    ``word_info_lost`` and ``word_info_preserved`` system evals: exact match,
-    substitution, deletion, then insertion.  Word-information metrics depend
-    on the hit count, so they must not derive it by subtracting the full edit
-    distance (which also includes insertions).
+    ``Levenshtein.opcodes`` is the repository's standard token-alignment
+    implementation.  Using its compact opcode stream avoids materializing a
+    Python ``len(ref) x len(hyp)`` matrix, which matters for long transcripts.
+    Word-information metrics depend on the hit count, so they must not derive
+    it by subtracting the full edit distance (which also includes insertions).
     """
-    n, m = len(ref), len(hyp)
-    dp = [[0] * (m + 1) for _ in range(n + 1)]
-    for i in range(n + 1):
-        dp[i][0] = i
-    for j in range(m + 1):
-        dp[0][j] = j
-    for i in range(1, n + 1):
-        for j in range(1, m + 1):
-            cost = 0 if ref[i - 1] == hyp[j - 1] else 1
-            dp[i][j] = min(
-                dp[i - 1][j - 1] + cost,
-                dp[i - 1][j] + 1,
-                dp[i][j - 1] + 1,
-            )
-
     hits = substitutions = deletions = insertions = 0
-    i, j = n, m
-    while i > 0 or j > 0:
-        if (
-            i > 0
-            and j > 0
-            and ref[i - 1] == hyp[j - 1]
-            and dp[i][j] == dp[i - 1][j - 1]
-        ):
-            hits += 1
-            i -= 1
-            j -= 1
-        elif i > 0 and j > 0 and dp[i][j] == dp[i - 1][j - 1] + 1:
-            substitutions += 1
-            i -= 1
-            j -= 1
-        elif i > 0 and dp[i][j] == dp[i - 1][j] + 1:
-            deletions += 1
-            i -= 1
-        else:
-            insertions += 1
-            j -= 1
+    for operation, ref_start, ref_end, hyp_start, hyp_end in Levenshtein.opcodes(
+        ref, hyp
+    ):
+        ref_count = ref_end - ref_start
+        hyp_count = hyp_end - hyp_start
+        if operation == "equal":
+            hits += ref_count
+        elif operation == "replace":
+            substitutions += min(ref_count, hyp_count)
+            deletions += max(ref_count - hyp_count, 0)
+            insertions += max(hyp_count - ref_count, 0)
+        elif operation == "delete":
+            deletions += ref_count
+        elif operation == "insert":
+            insertions += hyp_count
 
     return hits, substitutions, deletions, insertions
 

@@ -7,14 +7,18 @@ import random
 from functools import cache
 from pathlib import Path
 
+import Levenshtein
 import pytest
 import yaml
+from django.conf import settings
 
 from agentic_eval.core_evals.fi_evals.function.functions import (
     _align_counts,
     calculate_word_info_lost,
     calculate_word_info_preserved,
+    custom_code_eval,
 )
+from agentic_eval.core_evals.fi_utils import sandbox
 from model_hub.management.commands.seed_system_evals import load_yaml_evals
 
 FUNCTION_DIR = Path(__file__).resolve().parent.parent / "function"
@@ -34,66 +38,30 @@ def _yaml_score(name: str, hypothesis: str, reference: str) -> float:
     return _load_eval(name)(None, hypothesis, reference, None)["score"]
 
 
-def _exhaustive_align_counts(reference: tuple[str, ...], hypothesis: tuple[str, ...]):
-    """Return alignment counts without using dynamic programming.
-
-    This is intentionally limited to the short sequences used by the
-    randomized test. It provides an independent oracle for the production
-    backtrace, including its documented tie-breaking order.
-    """
-
-    @cache
-    def align(i: int, j: int):
-        if i == 0 and j == 0:
-            return 0, (), 0, 0, 0, 0
-
-        candidates = []
-        if i > 0 and j > 0:
-            previous = align(i - 1, j - 1)
-            is_hit = reference[i - 1] == hypothesis[j - 1]
-            candidates.append(
-                (
-                    previous[0] + (0 if is_hit else 1),
-                    (0 if is_hit else 1,) + previous[1],
-                    previous[2] + int(is_hit),
-                    previous[3] + int(not is_hit),
-                    previous[4],
-                    previous[5],
-                )
-            )
-        if i > 0:
-            previous = align(i - 1, j)
-            candidates.append(
-                (
-                    previous[0] + 1,
-                    (2,) + previous[1],
-                    previous[2],
-                    previous[3],
-                    previous[4] + 1,
-                    previous[5],
-                )
-            )
-        if j > 0:
-            previous = align(i, j - 1)
-            candidates.append(
-                (
-                    previous[0] + 1,
-                    (3,) + previous[1],
-                    previous[2],
-                    previous[3],
-                    previous[4],
-                    previous[5] + 1,
-                )
-            )
-
-        return min(candidates, key=lambda candidate: (candidate[0], candidate[1]))
-
-    return align(len(reference), len(hypothesis))[2:]
+def _opcode_counts(
+    reference: list[str], hypothesis: list[str]
+) -> tuple[int, int, int, int]:
+    """Count the public Levenshtein opcode stream for test expectations."""
+    hits = substitutions = deletions = insertions = 0
+    for operation, ref_start, ref_end, hyp_start, hyp_end in Levenshtein.opcodes(
+        reference, hypothesis
+    ):
+        ref_count = ref_end - ref_start
+        hyp_count = hyp_end - hyp_start
+        if operation == "equal":
+            hits += ref_count
+        elif operation == "replace":
+            substitutions += min(ref_count, hyp_count)
+            deletions += max(ref_count - hyp_count, 0)
+            insertions += max(hyp_count - ref_count, 0)
+        elif operation == "delete":
+            deletions += ref_count
+        elif operation == "insert":
+            insertions += hyp_count
+    return hits, substitutions, deletions, insertions
 
 
-def _expected_score(
-    reference: tuple[str, ...], hypothesis: tuple[str, ...], hits: int
-) -> float:
+def _expected_score(reference: list[str], hypothesis: list[str], hits: int) -> float:
     if not reference and not hypothesis:
         return 1.0
     if not reference or not hypothesis:
@@ -110,7 +78,7 @@ def _expected_score(
         ("a b", "a c", 0.25),
         ("the cat sat down", "the big cat sat", 0.5625),
         ("a b", "c d", 0.0),
-        ("a b a", "a a b", 1 / 9),
+        ("a b a", "a a b", 4 / 9),
         ("", "", 1.0),
         ("", "extra words", 0.0),
         ("  A\n B  ", "a b", 1.0),
@@ -143,15 +111,32 @@ def test_system_eval_seeder_loads_both_word_information_templates():
         assert definition["config"]["required_keys"] == ["reference", "hypothesis"]
 
 
-def test_alignment_matches_independent_oracle():
+def test_yaml_bodies_run_through_the_local_code_eval_sandbox(monkeypatch):
+    """Exercise the production code-eval path, not only direct ``exec``."""
+    monkeypatch.setattr(sandbox, "_call_executor_service", lambda *args, **kwargs: None)
+    monkeypatch.setattr(settings, "CODE_EXECUTOR_LOCAL_FALLBACK", True)
+    monkeypatch.setattr(settings, "CLOUD_DEPLOYMENT", "")
+
+    for name in ("word_info_lost", "word_info_preserved"):
+        path = FUNCTION_DIR / f"{name}.yaml"
+        code = yaml.safe_load(path.read_text())["config"]["code"]
+        result = custom_code_eval(
+            code,
+            reference="the cat sat",
+            hypothesis="the cat sat on the mat",
+        )
+        assert result["result"] == pytest.approx(0.5)
+
+
+def test_alignment_matches_levenshtein_opcode_contract():
     rng = random.Random(3228)
     vocabulary = ("a", "b", "c")
 
     for _ in range(500):
-        reference = tuple(rng.choice(vocabulary) for _ in range(rng.randrange(8)))
-        hypothesis = tuple(rng.choice(vocabulary) for _ in range(rng.randrange(8)))
-        expected_counts = _exhaustive_align_counts(reference, hypothesis)
-        assert _align_counts(list(reference), list(hypothesis)) == expected_counts
+        reference = [rng.choice(vocabulary) for _ in range(rng.randrange(8))]
+        hypothesis = [rng.choice(vocabulary) for _ in range(rng.randrange(8))]
+        expected_counts = _opcode_counts(reference, hypothesis)
+        assert _align_counts(reference, hypothesis) == expected_counts
 
         reference_text = " ".join(reference)
         hypothesis_text = " ".join(hypothesis)
@@ -168,3 +153,25 @@ def test_alignment_matches_independent_oracle():
         assert calculate_word_info_lost(reference_text, hypothesis_text)[
             "result"
         ] == pytest.approx(expected_score)
+
+
+def test_long_transcripts_use_the_compact_alignment_path():
+    reference = [f"reference-{index}" for index in range(2_000)]
+    hypothesis = reference + [f"insertion-{index}" for index in range(1_000)]
+    reference_text = " ".join(reference)
+    hypothesis_text = " ".join(hypothesis)
+    expected_score = 2 / 3
+
+    assert _align_counts(reference, hypothesis) == (2_000, 0, 0, 1_000)
+    assert _yaml_score(
+        "word_info_preserved", hypothesis_text, reference_text
+    ) == pytest.approx(expected_score)
+    assert _yaml_score(
+        "word_info_lost", hypothesis_text, reference_text
+    ) == pytest.approx(expected_score)
+    assert calculate_word_info_preserved(reference_text, hypothesis_text)[
+        "result"
+    ] == pytest.approx(expected_score)
+    assert calculate_word_info_lost(reference_text, hypothesis_text)[
+        "result"
+    ] == pytest.approx(expected_score)
