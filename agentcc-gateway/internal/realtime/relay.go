@@ -2,6 +2,7 @@ package realtime
 
 import (
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,8 +30,9 @@ type RelayConfig struct {
 	IdleTimeout    time.Duration
 	MaxMessageSize int64
 	// OnClientMessage, when set, sees every client message before it is relayed. It runs on the
-	// single client-reading goroutine, so it needs no locking of its own.
-	OnClientMessage func(messageType int, data []byte)
+	// single client-reading goroutine, so it needs no locking of its own. An error refuses the
+	// message: it is not relayed, and the client is closed with a policy violation.
+	OnClientMessage func(messageType int, data []byte) error
 }
 
 func (c RelayConfig) idleTimeout() time.Duration {
@@ -143,7 +145,10 @@ func (r *Relay) readFromClient() {
 		r.session.ClientConn.SetReadDeadline(time.Now().Add(r.config.idleTimeout()))
 		r.session.Usage.IncrementMessages()
 		if r.config.OnClientMessage != nil {
-			r.config.OnClientMessage(messageType, data)
+			if err := r.config.OnClientMessage(messageType, data); err != nil {
+				r.refuseClient(err)
+				return
+			}
 		}
 
 		select {
@@ -154,6 +159,23 @@ func (r *Relay) readFromClient() {
 		}
 	}
 }
+
+// refuseClient ends the session over a client message the relay will not forward, telling the
+// client why in the close frame.
+func (r *Relay) refuseClient(err error) {
+	reason := err.Error()
+	if len(reason) > maxCloseReason {
+		reason = strings.ToValidUTF8(reason[:maxCloseReason], "")
+	}
+	r.session.ClientConn.WriteControl(websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.ClosePolicyViolation, reason),
+		time.Now().Add(clientCloseTimeout))
+	r.session.Close("client_message_refused")
+}
+
+// maxCloseReason is the most a close frame's reason can hold: a control frame's 125 bytes less
+// the status code.
+const maxCloseReason = 123
 
 func (r *Relay) writeToProvider() {
 	defer r.wg.Done()

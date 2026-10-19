@@ -123,6 +123,11 @@ func (h *Handlers) relaySpeech(w http.ResponseWriter, r *http.Request, vendor, p
 		if allowed, ok := rc.Metadata["auth_allowed_providers"]; ok && !slices.Contains(splitCSV(allowed), rc.Provider) {
 			return models.ErrForbidden("API key does not have access to provider: " + rc.Provider)
 		}
+		if rc.Model != "" {
+			if err := h.speechModelAllowed(rc, rc.Model); err != nil {
+				return err
+			}
+		}
 		conn, resp, err := speechDialer.DialContext(ctx, session.URL, session.Header)
 		if err != nil {
 			return speechDialError(resp, err)
@@ -143,6 +148,14 @@ func (h *Handlers) relaySpeech(w http.ResponseWriter, r *http.Request, vendor, p
 		return
 	}
 
+	// Cartesia synthesis names its model in each request, so it is checked as it arrives.
+	session.AdmitModel = func(model string) error {
+		err := h.speechModelAllowed(rc, model)
+		if err != nil {
+			rc.AddError(err)
+		}
+		return err
+	}
 	relaySession := realtime.NewSession("speech-"+rc.RequestID, rc.RequestID, orgID, rc.Model, rc.Provider, client, upstream)
 	expire := time.AfterFunc(speechMaxSession, func() { relaySession.Close("max_duration") })
 	realtime.NewRelay(relaySession, realtime.RelayConfig{
@@ -150,8 +163,8 @@ func (h *Handlers) relaySpeech(w http.ResponseWriter, r *http.Request, vendor, p
 		PongTimeout:    10 * time.Second,
 		IdleTimeout:    speechIdleTimeout,
 		MaxMessageSize: 16 << 20,
-		OnClientMessage: func(messageType int, data []byte) {
-			session.ClientMessage(messageType == websocket.BinaryMessage, data)
+		OnClientMessage: func(messageType int, data []byte) error {
+			return session.ClientMessage(messageType == websocket.BinaryMessage, data)
 		},
 	}, slog.Default()).Start()
 	expire.Stop()
@@ -171,6 +184,23 @@ func (h *Handlers) relaySpeech(w http.ResponseWriter, r *http.Request, vendor, p
 	}
 	rc.SetMetadata("close_reason", relaySession.CloseReason)
 	h.engine.RunPostPlugins(context.WithoutCancel(r.Context()), rc)
+}
+
+// speechModelAllowed applies the key's model restrictions (its own model list and its access
+// groups) to a speech model. The auth plugin checks only a model known when the request
+// arrives, which a Cartesia synthesis connection never has.
+func (h *Handlers) speechModelAllowed(rc *models.RequestContext, model string) error {
+	if key := h.lookupRequestKey(rc); key != nil && !key.CanAccessModel(model) {
+		return models.ErrForbidden("API key does not have access to model: " + model)
+	}
+	groups := splitCSV(rc.Metadata["key_access_groups"])
+	if h.accessGroupChecker.IsEnabled() && len(groups) > 0 {
+		if _, allowed := h.accessGroupChecker.Check(model, groups); !allowed {
+			return models.ErrForbidden(fmt.Sprintf("Model %q is not available for this API key. %s",
+				model, h.accessGroupChecker.DescribeAllowed(groups)))
+		}
+	}
+	return nil
 }
 
 // speechClientKey reads the gateway key from wherever the vendor's own SDK puts its key:

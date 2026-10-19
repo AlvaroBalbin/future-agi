@@ -148,6 +148,10 @@ type Session struct {
 	URL    string      // upstream WebSocket URL, the client's query included
 	Header http.Header // upstream credential
 	Kind   Kind
+	// AdmitModel, when set, decides whether the client may use a model it names in a message
+	// (in the gateway's form, cartesia/sonic-3). A model in the URL is known before connecting
+	// and checked there instead.
+	AdmitModel func(model string) error
 
 	vendor         string
 	model          string
@@ -197,8 +201,9 @@ func (p *Provider) Open(path string, query url.Values, header http.Header) (*Ses
 	return s, nil
 }
 
-// ClientMessage meters one message the client sent.
-func (s *Session) ClientMessage(binary bool, data []byte) {
+// ClientMessage meters one message the client sent, or refuses it, unmetered, when it names a
+// model AdmitModel rejects; a refused message must not be relayed.
+func (s *Session) ClientMessage(binary bool, data []byte) error {
 	switch {
 	case s.Kind == Transcription:
 		if binary {
@@ -214,24 +219,32 @@ func (s *Session) ClientMessage(binary bool, data []byte) {
 			s.characters += utf8.RuneCountInString(m.Text)
 		}
 	default: // cartesia synthesis: the model and voice travel with each request, not in the URL
-		var m struct {
-			ModelID    string `json:"model_id"`
-			Transcript string `json:"transcript"`
-			Voice      struct {
-				ID string `json:"id"`
-			} `json:"voice"`
+		// Fields are read one by one so a field of an unexpected shape cannot hide the model.
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(data, &fields) != nil {
+			return nil
 		}
-		if json.Unmarshal(data, &m) != nil {
-			return
+		var model, transcript string
+		var voice struct {
+			ID string `json:"id"`
 		}
-		s.characters += utf8.RuneCountInString(m.Transcript)
-		if m.ModelID != "" {
-			s.model = m.ModelID
+		json.Unmarshal(fields["model_id"], &model)
+		json.Unmarshal(fields["transcript"], &transcript)
+		json.Unmarshal(fields["voice"], &voice)
+		if model != "" && model != s.model {
+			if s.AdmitModel != nil {
+				if err := s.AdmitModel(s.vendor + "/" + model); err != nil {
+					return err
+				}
+			}
+			s.model = model
 		}
-		if m.Voice.ID != "" {
-			s.voice = m.Voice.ID
+		s.characters += utf8.RuneCountInString(transcript)
+		if voice.ID != "" {
+			s.voice = voice.ID
 		}
 	}
+	return nil
 }
 
 // Model is the session's model as the gateway names it (deepgram/nova-3, cartesia/sonic-3),
