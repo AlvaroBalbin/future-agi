@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -331,5 +334,80 @@ func TestChatCompletion_InternalKeyReportsTheBaseProviderCeiling(t *testing.T) {
 
 	if got := chatTimeoutHeader(t, srv, "Bearer "+internalKey); got != "30000" {
 		t.Errorf("x-agentcc-timeout-ms = %q, want 30000 (the base provider, not the org's cached 20s instance)", got)
+	}
+}
+
+// Model fallback can select an org provider even for an internal key. The
+// header must describe that instance, not the base provider with the same ID.
+func TestChatCompletion_InternalKeyReportsTheFallbackProviderCeiling(t *testing.T) {
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprint(w, `{"error":{"message":"rate limited","type":"rate_limit_error"}}`)
+	}))
+	defer primary.Close()
+	fallback := startMockOpenAI(t)
+	defer fallback.Close()
+
+	for _, stream := range []bool{false, true} {
+		for _, providerFailover := range []bool{false, true} {
+			t.Run(fmt.Sprintf("stream=%t/provider_failover=%t", stream, providerFailover), func(t *testing.T) {
+				const key = "sk-agentcc-internal-fallback-timeout"
+				cfg := config.DefaultConfig()
+				cfg.Auth.Enabled = true
+				cfg.Auth.Keys = []config.AuthKeyConfig{{
+					Name: "internal", Key: key, KeyType: "internal",
+					Metadata: map[string]string{"org_id": orgTimeoutOrgID},
+				}}
+				cfg.Providers["primary"] = config.ProviderConfig{
+					BaseURL: primary.URL, APIFormat: "openai", Models: []string{"primary-model"},
+				}
+				cfg.Providers["openai"] = config.ProviderConfig{
+					BaseURL: fallback.URL, APIFormat: "openai", Models: []string{"fallback-model"},
+					DefaultTimeout: 30 * time.Second,
+				}
+				cfg.Routing.DefaultStrategy = "round-robin"
+				cfg.Routing.Failover = config.FailoverConfig{Enabled: true, MaxAttempts: 2, OnStatusCodes: []int{http.StatusTooManyRequests}}
+				cfg.Routing.ModelFallbacks = map[string][]string{"primary-model": {"fallback-model"}}
+				if providerFailover {
+					cfg.Providers["primary-backup"] = cfg.Providers["primary"]
+				}
+
+				registry, err := providers.NewRegistry(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { registry.Close() })
+				tenantStore := tenant.NewStore()
+				tenantStore.Set(orgTimeoutOrgID, &tenant.OrgConfig{
+					Providers: map[string]*tenant.ProviderConfig{
+						"openai": {Enabled: true, APIKey: "org-fallback-key", Models: []string{"fallback-model"}, Timeout: 20},
+					},
+				})
+				srv := New(cfg, "", registry, pipeline.NewEngine(), nil, nil, nil, nil, testModelDBPtr(), tenantStore, nil)
+				srv.ready.Store(true)
+
+				body := fmt.Sprintf(`{"model":"primary-model","stream":%t,"messages":[{"role":"user","content":"hello"}]}`, stream)
+				req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+				req.Header.Set("Authorization", "Bearer "+key)
+				w := httptest.NewRecorder()
+				srv.httpServer.Handler.ServeHTTP(w, req)
+
+				if w.Code != http.StatusOK {
+					t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+				}
+				if got := w.Header().Get("x-agentcc-fallback-used"); got != "true" {
+					t.Fatalf("fallback used = %q, want true", got)
+				}
+				if got := w.Header().Get("x-agentcc-provider"); got != "openai" {
+					t.Fatalf("provider = %q, want openai", got)
+				}
+				if !strings.Contains(w.Body.String(), "Hello!") {
+					t.Fatalf("missing fallback response: %s", w.Body.String())
+				}
+				if got := w.Header().Get("x-agentcc-timeout-ms"); got != "20000" {
+					t.Errorf("timeout = %q, want the org fallback's 20000, not the base provider's 30000", got)
+				}
+			})
+		}
 	}
 }

@@ -853,14 +853,10 @@ func (h *Handlers) orgModelTimeout(rc *models.RequestContext) (time.Duration, bo
 // look like it had been applied.
 //
 // resolved is already formatted; it is returned unchanged when the provider
-// cannot be identified or states no timeout.
-func (h *Handlers) appliedTimeoutMs(rc *models.RequestContext, resolved string) string {
+// states no timeout. Callers that retry pass the instance that served the response.
+func appliedTimeoutMs(provider providers.Provider, resolved string) string {
 	ms, err := strconv.ParseInt(resolved, 10, 64)
 	if err != nil || ms <= 0 {
-		return resolved
-	}
-	provider, ok := h.servingProvider(rc)
-	if !ok {
 		return resolved
 	}
 	reporter, ok := provider.(providers.ClientTimeoutReporter)
@@ -888,8 +884,9 @@ func orgInstanceServed(rc *models.RequestContext) bool {
 		shouldApplyOrgProviderOverride(rc)
 }
 
-// servingProvider returns the instance behind rc.Provider, which routing,
-// failover and fallbacks all keep pointed at the provider that served.
+// servingProvider resolves the instance for handlers without chat retries.
+// Chat response writers retain the successful instance instead, since retries
+// can switch between base and org providers with the same ID.
 func (h *Handlers) servingProvider(rc *models.RequestContext) (providers.Provider, bool) {
 	if rc.Provider == "" {
 		return nil, false
@@ -1396,6 +1393,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 
 	originalModel := rc.Request.Model
 	orgID := rc.Metadata["org_id"]
+	servingProvider := provider
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		resp, err := provider.ChatCompletion(ctx, rc.Request)
@@ -1420,6 +1418,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 
 			fbResp, fbCallErr := fbProvider.ChatCompletion(ctx, rc.Request)
 			if fbCallErr == nil {
+				servingProvider = fbProvider
 				rc.Response = fbResp
 				rc.ResolvedModel = fbResp.Model
 				rc.Flags.FallbackUsed = true
@@ -1442,7 +1441,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 		return
 	}
 
-	h.setAgentccHeaders(w, rc)
+	h.setAgentccHeadersForProvider(w, rc, servingProvider)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(rc.Response)
@@ -1451,6 +1450,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, fo *routing.Failover, orgCfg *tenant.OrgConfig) {
 	originalModel := rc.Request.Model
 	orgID := rc.Metadata["org_id"]
+	var servingProvider providers.Provider
 
 	// Wrap the failover loop inside engine.Process so pre-plugins run once,
 	// then the failover retries only the provider call, then post-plugins run once.
@@ -1479,6 +1479,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 			if err != nil {
 				return err
 			}
+			servingProvider = p
 			rc.Response = resp
 			rc.ResolvedModel = resp.Model
 			return nil
@@ -1505,6 +1506,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 
 				fbResp, fbCallErr := fbProvider.ChatCompletion(ctx, rc.Request)
 				if fbCallErr == nil {
+					servingProvider = fbProvider
 					rc.Response = fbResp
 					rc.ResolvedModel = fbResp.Model
 					rc.Flags.FallbackUsed = true
@@ -1539,7 +1541,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 		return
 	}
 
-	h.setAgentccHeaders(w, rc)
+	h.setAgentccHeadersForProvider(w, rc, servingProvider)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(rc.Response)
@@ -1555,6 +1557,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	var chunks <-chan models.StreamChunk
 	var errCh <-chan error
 	var firstChunk *models.StreamChunk
+	var servingProvider providers.Provider
 	var upstreamStreamCancel context.CancelFunc
 	defer func() {
 		if upstreamStreamCancel != nil {
@@ -1584,6 +1587,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			cancelAndDrainStream(upstreamStreamCancel, chunks)
 		}
 		upstreamStreamCancel = attemptCancel
+		servingProvider = callProvider
 		chunks = candidateChunks
 		errCh = candidateErrCh
 		firstChunk = chunk
@@ -1689,7 +1693,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	}
 
 	// Set Prism headers after pre-plugins have run but before the streaming body starts.
-	h.setAgentccHeaders(w, rc)
+	h.setAgentccHeadersForProvider(w, rc, servingProvider)
 	sseWriter.WriteHeaders()
 
 	// Create a cancellable context for stream guardrail checks.
@@ -1945,6 +1949,13 @@ func cancelAndDrainStream(cancel context.CancelFunc, chunks <-chan models.Stream
 }
 
 func (h *Handlers) setAgentccHeaders(w http.ResponseWriter, rc *models.RequestContext) {
+	provider, _ := h.servingProvider(rc)
+	h.setAgentccHeadersForProvider(w, rc, provider)
+}
+
+// Chat retries can switch between base and org instances with the same ID.
+// Pass the successful instance rather than reconstructing it from routing metadata.
+func (h *Handlers) setAgentccHeadersForProvider(w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider) {
 	w.Header().Set("x-agentcc-provider", rc.Provider)
 	if rc.ResolvedModel != "" {
 		w.Header().Set("x-agentcc-model-used", rc.ResolvedModel)
@@ -1971,7 +1982,7 @@ func (h *Handlers) setAgentccHeaders(w http.ResponseWriter, rc *models.RequestCo
 		w.Header().Set("x-agentcc-routing-strategy", strategy)
 	}
 	if timeout, ok := rc.Metadata["timeout_ms"]; ok {
-		w.Header().Set("x-agentcc-timeout-ms", h.appliedTimeoutMs(rc, timeout))
+		w.Header().Set("x-agentcc-timeout-ms", appliedTimeoutMs(provider, timeout))
 	}
 
 	// Advanced routing headers.
