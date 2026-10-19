@@ -9,6 +9,10 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// providerCloseGrace is how long a provider that failed a write has to close its side; once it
+// has, delivering what it sent is bounded by the client write deadline instead.
+const providerCloseGrace = 5 * time.Second
+
 // relayMessage holds a WebSocket message to be relayed.
 type relayMessage struct {
 	messageType int
@@ -55,6 +59,11 @@ type Relay struct {
 	// providerClosed is set once the provider's side has ended; from then on writeToClient
 	// delivers what is still queued and ends the session.
 	providerClosed atomic.Bool
+	// clientDraining is closed once writeToClient has delivered everything and asked the client
+	// to close; readFromClient then discards what the client still sends until it answers, and
+	// closes clientReadDone when it returns.
+	clientDraining chan struct{}
+	clientReadDone chan struct{}
 }
 
 // NewRelay creates a new message relay.
@@ -68,6 +77,8 @@ func NewRelay(session *Session, config RelayConfig, logger *slog.Logger) *Relay 
 		providerToClient: make(chan relayMessage, config.ChannelBufferSize),
 		config:           config,
 		logger:           logger,
+		clientDraining:   make(chan struct{}),
+		clientReadDone:   make(chan struct{}),
 	}
 }
 
@@ -107,6 +118,7 @@ func (r *Relay) ping() {
 func (r *Relay) readFromClient() {
 	defer r.wg.Done()
 	defer close(r.clientToProvider)
+	defer close(r.clientReadDone)
 
 	r.session.ClientConn.SetReadLimit(r.config.MaxMessageSize)
 	r.config.keepReading(r.session.ClientConn)
@@ -114,6 +126,9 @@ func (r *Relay) readFromClient() {
 	for {
 		messageType, data, err := r.session.ClientConn.ReadMessage()
 		if err != nil {
+			if r.draining() {
+				return // writeToClient ends the session once the client has answered its close
+			}
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				r.logger.Info("client closed connection", "session_id", r.session.ID)
 			} else if !r.session.IsClosed() {
@@ -121,6 +136,9 @@ func (r *Relay) readFromClient() {
 			}
 			r.session.Close("client_disconnected")
 			return
+		}
+		if r.draining() {
+			continue // nobody is left to send it to
 		}
 		r.session.ClientConn.SetReadDeadline(time.Now().Add(r.config.idleTimeout()))
 		r.session.Usage.IncrementMessages()
@@ -130,6 +148,7 @@ func (r *Relay) readFromClient() {
 
 		select {
 		case r.clientToProvider <- relayMessage{messageType, data}:
+		case <-r.clientDraining:
 		case <-r.session.StopChan():
 			return
 		}
@@ -151,15 +170,22 @@ func (r *Relay) writeToProvider() {
 			}
 			r.session.ProviderConn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := r.session.ProviderConn.WriteMessage(msg.messageType, msg.data); err != nil {
-				// A message written after the provider closed must not cut short the delivery of
-				// what the provider sent before closing; writeToClient ends the session.
-				if r.providerClosed.Load() {
-					return
-				}
-				if !r.session.IsClosed() {
+				// A write can fail because the provider is closing before readFromProvider has
+				// seen its close, with final results still unread or queued. Ending the session
+				// here would drop them, so close the provider's side instead: readFromProvider
+				// then reads to the end and writeToClient delivers what is queued before ending
+				// the session. The grace period bounds a provider that never answers the close.
+				if !r.providerClosed.Load() && !r.session.IsClosed() {
 					r.logger.Warn("provider write error", "session_id", r.session.ID, "error", err)
 				}
-				r.session.Close("provider_write_error")
+				r.session.ProviderConn.WriteControl(websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+					time.Now().Add(2*time.Second))
+				time.AfterFunc(providerCloseGrace, func() {
+					if !r.providerClosed.Load() {
+						r.session.Close("provider_write_error")
+					}
+				})
 				return
 			}
 		case <-r.session.StopChan():
@@ -206,6 +232,7 @@ func (r *Relay) writeToClient() {
 		select {
 		case msg, ok := <-r.providerToClient:
 			if !ok {
+				r.closeClient()
 				r.session.Close("provider_disconnected")
 				return
 			}
@@ -220,5 +247,36 @@ func (r *Relay) writeToClient() {
 		case <-r.session.StopChan():
 			return
 		}
+	}
+}
+
+// clientCloseTimeout bounds how long the client has to answer the relay's close.
+const clientCloseTimeout = 2 * time.Second
+
+// closeClient completes the close handshake with the client before the session drops the
+// connection. Dropping it while the client is still sending audio makes the gateway's TCP stack
+// reset the connection, and a reset discards whatever the client has not read yet: the last
+// results just delivered.
+func (r *Relay) closeClient() {
+	if r.session.IsClosed() {
+		return
+	}
+	close(r.clientDraining)
+	r.session.ClientConn.WriteControl(websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+		time.Now().Add(clientCloseTimeout))
+	select {
+	case <-r.clientReadDone:
+	case <-time.After(clientCloseTimeout):
+	case <-r.session.StopChan():
+	}
+}
+
+func (r *Relay) draining() bool {
+	select {
+	case <-r.clientDraining:
+		return true
+	default:
+		return false
 	}
 }

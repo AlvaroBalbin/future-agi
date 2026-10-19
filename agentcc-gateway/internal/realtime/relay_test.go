@@ -16,6 +16,17 @@ import (
 // relay must deliver everything the vendor sent before ending the session, even when the client
 // reads slowly enough that those results are still queued inside the relay at the close.
 func TestRelayDeliversWhatTheProviderSentBeforeClosing(t *testing.T) {
+	relayDrainTest(t, false)
+}
+
+// A caller keeps streaming audio while the vendor closes, so a write to the vendor can fail
+// before the relay has seen the vendor's close. That failure must not drop the final results.
+func TestRelayDeliversWhatTheProviderSentBeforeClosingWhileTheClientIsSending(t *testing.T) {
+	relayDrainTest(t, true)
+}
+
+func relayDrainTest(t *testing.T, clientSends bool) {
+	t.Helper()
 	const messages = 200
 	payload := strings.Repeat("x", 64<<10)
 	upgrader := websocket.Upgrader{}
@@ -26,6 +37,16 @@ func TestRelayDeliversWhatTheProviderSentBeforeClosing(t *testing.T) {
 			return
 		}
 		defer conn.Close()
+		// Reading the caller's audio also completes the close handshake, as a vendor does.
+		readerDone := make(chan struct{})
+		go func() {
+			defer close(readerDone)
+			for {
+				if _, _, err := conn.ReadMessage(); err != nil {
+					return
+				}
+			}
+		}()
 		for i := 0; i < messages; i++ {
 			if err := conn.WriteMessage(websocket.TextMessage, []byte(payload)); err != nil {
 				return
@@ -33,6 +54,10 @@ func TestRelayDeliversWhatTheProviderSentBeforeClosing(t *testing.T) {
 		}
 		conn.WriteControl(websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
+		select {
+		case <-readerDone:
+		case <-time.After(5 * time.Second):
+		}
 	}))
 	defer provider.Close()
 
@@ -61,6 +86,13 @@ func TestRelayDeliversWhatTheProviderSentBeforeClosing(t *testing.T) {
 		t.Fatalf("dialing gateway: %v", err)
 	}
 	defer client.Close()
+	if clientSends {
+		go func() {
+			audio := make([]byte, 640)
+			for client.WriteMessage(websocket.BinaryMessage, audio) == nil {
+			}
+		}()
+	}
 
 	// Let the provider finish and close while the relay still holds most of its messages.
 	time.Sleep(300 * time.Millisecond)
