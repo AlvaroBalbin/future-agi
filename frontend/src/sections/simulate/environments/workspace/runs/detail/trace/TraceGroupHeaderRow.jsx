@@ -13,7 +13,12 @@ import Iconify from "src/components/iconify";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
 import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
 import { SCORING_STATUS } from "../../runs.constants";
-import { HEAD_ROW_PX, isBad, neutralCheckboxSx } from "./traceTable.constants";
+import {
+  HEAD_ROW_PX,
+  isBad,
+  neutralCheckboxSx,
+  pinnedLeftSx,
+} from "./traceTable.constants";
 import { CellSkeleton } from "./traceCells";
 
 const DESC_KEYS = [
@@ -186,7 +191,16 @@ export default function TraceGroupHeaderRow({
     <TableRow onClick={onToggle}>
       {/* Keeps the grid aligned under the call rows' checkbox column. */}
       {leadingCell && (
-        <TableCell sx={{ ...cellSx, px: 1, width: 44, textAlign: "center" }}>
+        <TableCell
+          sx={{
+            ...cellSx,
+            ...pinnedLeftSx,
+            zIndex: 3,
+            px: 1,
+            width: 44,
+            textAlign: "center",
+          }}
+        >
           {checkbox?.selectable && (
             <Checkbox
               size="small"
