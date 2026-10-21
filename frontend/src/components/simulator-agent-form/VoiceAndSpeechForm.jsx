@@ -360,7 +360,7 @@ const VoiceAndSpeechForm = ({ control, errors }) => {
           max={1.2}
           step={0.1}
           sliderContainerStyles={{}}
-          marks={generateNMarks(0.7, 1.2)}
+          marks={generateNMarks(0.7, 1.2, 0.1)}
           inputSectionStyles={undefined}
         />
       </Box>
