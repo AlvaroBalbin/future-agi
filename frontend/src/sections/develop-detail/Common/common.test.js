@@ -10,9 +10,11 @@ describe("generateNMarks", () => {
 
   it("places a mark on every step value for a 0-10 step 0.5 slider", () => {
     const values = generateNMarks(0, 10, 0.5).map((mark) => mark.value);
-    expect(values[0]).toBe(0);
-    expect(values[values.length - 1]).toBe(10);
-    expect(values).toHaveLength(21);
+    expect(values).toEqual(Array.from({ length: 21 }, (_, i) => i * 0.5));
+  });
+
+  it("returns no marks when the slider range is missing", () => {
+    expect(generateNMarks(undefined, undefined)).toEqual([]);
   });
 
   it("defaults to ten intervals when no step is provided", () => {
