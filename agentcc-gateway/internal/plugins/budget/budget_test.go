@@ -631,3 +631,20 @@ func TestProcessResponse_CustomPricedModel_NoWarningAndMetered(t *testing.T) {
 		t.Fatalf("org spend = %v, want ~0.002", total)
 	}
 }
+
+// The budget table and the model database are separate: an operator who sets
+// only the budget's price still logs the request without a cost, so the hint
+// has to name both keys.
+func TestProcessResponse_UnpricedModel_HintNamesBothPricingKeys(t *testing.T) {
+	buf := captureSlog(t)
+	p := New(testTracker(), testPricing(), true, nil)
+
+	p.ProcessResponse(context.Background(), rcWithUsage("glm-5.3-flash", 1000, 500))
+
+	out := buf.String()
+	for _, key := range []string{"cost_tracking.custom_pricing", "model_database.overrides"} {
+		if !strings.Contains(out, key) {
+			t.Errorf("hint should name %s\n%s", key, out)
+		}
+	}
+}

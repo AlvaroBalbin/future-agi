@@ -596,7 +596,9 @@ func (p *Plugin) calculateCost(rc *models.RequestContext) float64 {
 
 // warnUnpriced logs, once per model, that spend for the model cannot be
 // metered. Returning a silent zero here is what let budgets pass unpriced
-// traffic without any sign that they were not counting it.
+// traffic without any sign that they were not counting it. Budgets price from
+// their own table, not the model database the cost plugin reads, so the hint
+// names both keys: setting only one leaves the other gap open.
 func (p *Plugin) warnUnpriced(rc *models.RequestContext, model string) {
 	if !p.enabled || p.unpricedWarnedCount.Load() >= maxUnpricedWarnings {
 		return
@@ -609,7 +611,8 @@ func (p *Plugin) warnUnpriced(rc *models.RequestContext, model string) {
 		"model", model,
 		"provider", rc.Provider,
 		"request_id", rc.RequestID,
-		"hint", "set cost_tracking.custom_pricing.<model> (input_per_mtok / output_per_mtok, USD per million tokens)",
+		"hint", "set cost_tracking.custom_pricing.<model> (input_per_mtok / output_per_mtok, USD per million tokens); "+
+			"the request log's cost is priced separately, from model_database.overrides.<model>.pricing (input_per_token / output_per_token, USD per token)",
 	)
 }
 

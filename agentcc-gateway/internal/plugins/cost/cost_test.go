@@ -595,7 +595,7 @@ func TestProcessResponse_PricedAudio_NotMarkedUnpriced(t *testing.T) {
 }
 
 // Not parallel: it swaps the process-wide slog default to capture output.
-func TestProcessResponse_UnpricedWarning_HintNamesBilledUnit(t *testing.T) {
+func TestProcessResponse_UnpricedWarning_HintNamesUnitAndBudgetKey(t *testing.T) {
 	var buf bytes.Buffer
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
@@ -623,6 +623,14 @@ func TestProcessResponse_UnpricedWarning_HintNamesBilledUnit(t *testing.T) {
 		line := warning(model)
 		if !strings.Contains(line, "model_database.overrides") || !strings.Contains(line, field) {
 			t.Errorf("%s: hint should name model_database.overrides and %s\n%s", model, field, line)
+		}
+		// Budgets price from their own table, so the cost plugin can neither
+		// claim the request escaped them nor leave out the key they read.
+		if !strings.Contains(line, "cost_tracking.custom_pricing") {
+			t.Errorf("%s: hint should name cost_tracking.custom_pricing, which budgets price from\n%s", model, line)
+		}
+		if strings.Contains(line, "not counted against budgets") {
+			t.Errorf("%s: cost warning must not claim budgets skip the request\n%s", model, line)
 		}
 	}
 }

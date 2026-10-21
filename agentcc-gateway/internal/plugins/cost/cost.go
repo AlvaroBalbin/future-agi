@@ -18,8 +18,9 @@ import (
 const (
 	// CostSourceUnpriced is written to Metadata["cost_source"] when the request
 	// used something billable (tokens, seconds of audio, characters of text) but
-	// no price is known for the model. The request is recorded without a cost,
-	// so spend counters cannot meter it.
+	// the model database has no price for the model. The request is recorded
+	// without a cost. Budgets price requests from their own table, so this flag
+	// says nothing about whether a budget counted the request.
 	CostSourceUnpriced = "unpriced"
 
 	// maxUnpricedWarnings bounds the warn-once set so a caller cycling through
@@ -27,11 +28,15 @@ const (
 	maxUnpricedWarnings = 1024
 )
 
-// Where an operator sets a missing price, by the unit the endpoint is billed in.
+// Where an operator sets a missing price, by the unit the endpoint is billed
+// in. The budget plugin does not read the model database: it prices chat
+// tokens from cost_tracking.custom_pricing, so every hint names that key too,
+// or an operator who sets one of the two would think the gap is closed.
 const (
 	tokenPriceHint     = "set model_database.overrides.<model>.pricing (input_per_token / output_per_token, USD per token)"
 	audioPriceHint     = "set model_database.overrides.<model>.pricing.input_per_second (USD per second of audio)"
 	characterPriceHint = "set model_database.overrides.<model>.pricing.input_per_character (USD per character of text)"
+	budgetPriceHint    = "; budgets price chat tokens separately, from cost_tracking.custom_pricing.<model> (input_per_mtok / output_per_mtok, USD per million tokens)"
 )
 
 // Plugin is a post-response pipeline plugin that calculates per-request cost.
@@ -157,9 +162,9 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		rc.Metadata["cost"] = fmt.Sprintf("%.6f", cost)
 	} else if billed > 0 {
 		// The request used something billable but there is no price for this
-		// model. Leaving this silent made the request look free: spend counters
-		// stayed at zero and budgets never tripped. Mark the request so the log
-		// row and analytics can surface it, and tell the operator once per model.
+		// model. Leaving this silent made the request look free in the request
+		// log and analytics. Mark the request so they can surface it, and tell
+		// the operator once per model.
 		rc.Metadata["cost_source"] = CostSourceUnpriced
 		p.warnUnpriced(rc, model, priceHint)
 	}
@@ -177,11 +182,11 @@ func (p *Plugin) warnUnpriced(rc *models.RequestContext, model, priceHint string
 		return
 	}
 	p.unpricedWarnedCount.Add(1)
-	slog.Warn("cost: no pricing for model; its requests are recorded without a cost and are not counted against budgets",
+	slog.Warn("cost: no pricing for model; its requests are recorded without a cost",
 		"model", model,
 		"provider", rc.Provider,
 		"request_id", rc.RequestID,
-		"hint", priceHint,
+		"hint", priceHint+budgetPriceHint,
 	)
 }
 
